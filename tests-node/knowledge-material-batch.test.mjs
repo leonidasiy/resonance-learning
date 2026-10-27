@@ -90,7 +90,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       if(body.response_format?.json_schema?.name==='quiz_evaluation_v3'){
         if(task.knowledge.sourceId==='capture-source'&&task.knowledge.mediaCandidates.length){assert.equal(task.imagePurpose,'illustration');assert.match(body.messages[0].content,/Missing depiction alone is not an unpictured knowledge fault/);}
         assert.equal(body.max_tokens,2048);assert.equal(modelInput.contract.role,'question-evaluator');
-        assert.match(body.messages[0].content,/paired-question-evaluator-v12/);
+        assert.match(body.messages[0].content,/paired-question-evaluator-v13/);
         assert.match(body.messages[0].content,/A faithful narrower relationship need not restore an unrelated or nonessential removed qualifier/);
         assert.match(body.messages[0].content,/Conditions, negations, units and causal qualifications necessary to preserve that relationship remain required/);
         assert.match(body.messages[0].content,/entire retained knowledge.summary/);

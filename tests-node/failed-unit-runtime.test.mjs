@@ -1,3 +1,4 @@
+import {syntheticRelationshipUnits} from './fixtures/webpage-condition-partition.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -89,12 +90,14 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
         }
         if (failureMode === 'stopped-before-acquisition') db.prepare("UPDATE knowledge_workflow_runs SET state='retryable-failure',revision=revision+1 WHERE owner_id=? AND run_id=?").run(ownerId, runId);
       }
-      else if (task.sections) {
-        assert.equal(task.sections.length, 1);
-        extractedPages.push(task.sections[0].id);
-        if(failureMode.startsWith('quiz-')&&task.sections[0].id==='page-4')return Response.json({error:{message:'Constructed page failure.'}},{status:503});
-        if (failureMode.startsWith('model') && !approvedRetry && task.sections[0].id === 'page-2') return new Response(JSON.stringify({ error: { message: 'Synthetic provider rejection.' } }), { status: Number(failureMode.slice(5)), headers: { 'content-type': 'application/json' } });
-        output = { pages: task.sections.map(section => ({ url: section.url, notes: 'Constructed progress.', candidates: [{ summary: section.text, normalizedHash: section.id, evidenceAnchors: [{ url: section.url, selector: section.locator }], coverageGoalIds: failureMode === 'material-coverage' ? ['observed'] : [], mediaCandidates: [] }] })) };
+      else if(task.operation==='extract-webpage-facts'){
+        const block=task.sourceBlocks[0],id=block.sectionId;extractedPages.push(id);
+        if(failureMode.startsWith('quiz-')&&id==='page-4')return Response.json({error:{message:'Constructed page failure.'}},{status:503});
+        if(failureMode.startsWith('model')&&!approvedRetry&&id==='page-2')return Response.json({error:{message:'Synthetic provider rejection.'}},{status:Number(failureMode.slice(5))});
+        output={notes:'Constructed progress.',candidates:[{summary:block.text,normalizedHash:id,evidenceAnchors:[{reference:block.citationReference,clause:block.text}],coverageGoalIds:failureMode==='material-coverage'?['observed']:[],mediaCandidates:[]}]};
+      }else if(task.operation==='normalize-webpage-claim-boundaries'){
+        output={notes:task.notes,additionalCandidates:[],reviews:task.candidates.map(candidate=>({sourceNormalizedHash:candidate.normalizedHash,relationshipUnits:syntheticRelationshipUnits([candidate]),candidates:[candidate]})),blockCoverage:task.sourceBlocks.map(block=>({blockId:block.id,disposition:'candidates',candidateHashes:task.candidates.map(c=>c.normalizedHash),reason:'Constructed supported relationship.'}))};
+      }else if(task.pairedQuiz){output={targets:task.pairedQuiz.canonicalAnswers.map(answer=>({answer,important:true,reason:'Constructed central target.'})),feedback:'Constructed importance approval.'};
       } else if (task.draft) {
         evaluatedQuizzes.push(task.knowledge.id);
         if(failureMode==='quiz-review-resume-success'&&task.knowledge.summary==='Synthetic distinct relationship 2.'&&evaluatedQuizzes.filter(id=>id.includes('page-2')).length===4)output={score:9,reasons:['Constructed recovery.'],feedback:'Constructed acceptance.',groundingProblems:[],knowledgeGroundingProblems:[]};
@@ -334,9 +337,9 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
       let generation=run.quizRetryGeneration;assert.equal(generation,run.revision);assert.equal(run.state,'per-point-quiz-loop');
       assert.equal(run.extractionStartedAt,started);assert.equal(run.extractionDeadlineAt,deadline);
       if(failureMode==='quiz-review-malformed'){
-        quizStillInvalid=true;const callsBefore=modelCalls;
+        quizStillInvalid=true;const callsBefore=modelCalls,evaluationsBefore=evaluatedQuizzes.length;
         await finish();assert.equal(run.failureKind,'WorkflowQuizItemsFailed');assert.equal(run.counts.acceptedQuizzes,2);
-        assert.equal(modelCalls-callsBefore,4,'Explicit quiz approval grants exactly one new four-attempt technical budget.');
+        assert.equal(evaluatedQuizzes.length-evaluationsBefore,4,'Explicit quiz approval grants exactly four technical critic attempts.');assert.equal(modelCalls-callsBefore,8,'Each critic attempt includes its separate answer-importance review.');
         const failedAgain=unwrap(await readFailedQuizItems(database,run));assert.equal(failedAgain[0].generation,generation);assert.equal(failedAgain[0].attempts,4);
         const noAuto=modelCalls;unwrap(await runtime().execute(run));assert.equal(modelCalls,noAuto);
         quizStillInvalid=false;
@@ -435,9 +438,9 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
       // Technical transport retries share one four-call budget.
       const refusals = stages.filter(key => key.startsWith('knowledge-scraper:scraper-material-batch-page-2') && !key.includes(`-retry-${generation}`));
       assert.equal(refusals.length, 4);
-      for (const attempt of [2,3,4]) assert(refusals.some(key => key.includes(`scraper-material-batch-page-2:technical-${attempt}:`)));
+      for (const attempt of [2,3,4]) assert(refusals.some(key => key.includes(`scraper-material-batch-page-2:text:page-2:coverage-v1:1:technical-${attempt}:`)));
     }
-    assert(stages.some(key => key.includes(`scraper-material-batch-page-2-retry-${generation}:`)), 'Approved acquisition uses a new durable generation.');
+    assert(stages.some(key => key.includes(`scraper-material-batch-page-2-retry-${generation}:text:page-2:coverage-v1:1:`)), 'Approved acquisition uses a new durable generation.');
     assert(stages.some(key => key.includes(`knowledge-quality-knowledge:${sourceId}:1:page-2-1-retry-${generation}:`)), 'Approved critique uses a new durable generation.');
     assert(!stages.some(key => /scraper-material-batch-page-[13]-retry-/u.test(key)), 'Healthy pages never acquire a retry generation.');
   } finally { db.close(); }
