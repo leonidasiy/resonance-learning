@@ -476,7 +476,12 @@ export function createExtractionRunner(dependencies) {
         if (dependencies.policy.maximumPagesPerExecution !== undefined && attemptedPages - previouslyAttemptedPages >= dependencies.policy.maximumPagesPerExecution) return { ok: true, value: freeze({ state: "awaiting-time-limit-decision", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "paused" }) };
         if (dependencies.stopRequested?.() === true && attemptedPages > previouslyAttemptedPages) return { ok: true, value: freeze({ state: "paused", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "paused" }) };
         if (attemptedPages >= dependencies.policy.maximumPages) return fail({ kind: "ExtractionLimitExceeded", limit: "pages" }, dependencies, command.runId);
-        if (currentPlan.stopDecision.decision === "complete") return fail({ kind: "ExtractionCoverageIncomplete" }, dependencies, command.runId);
+        if (currentPlan.stopDecision.decision === "complete") {
+          dependencies.logger({ event: "knowledge-extraction-premature-complete-rejected", runId: command.runId, failureKind: "ExtractionCoverageIncomplete" });
+          currentPlan = freeze({ ...currentPlan, stopDecision: freeze({ ...currentPlan.stopDecision, decision: "continue", rationale: "Deterministic verification found queued source content that has not been observed." }) });
+          const saved = await saveCurrentPlan();
+          if (!saved.ok) return saved;
+        }
         if (currentPlan.stopDecision.decision === "blocked") {
           if (scratchpad.acceptedHashes.length === 0) return fail({ kind: "ExtractionStopped" }, dependencies, command.runId);
           dependencies.logger({ event: "knowledge-extraction-agent-blocked", runId: command.runId });

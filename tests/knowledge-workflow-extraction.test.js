@@ -273,18 +273,30 @@ Deno.test("extraction completes when a covered frontier is exhausted", async () 
   assertEquals(fixture.points.length, 1);
 });
 
-Deno.test("extraction rejects an agent complete decision while relevant frontier work remains", async () => {
+for (const mode of ["discovered", "page", "material"]) for (const cached of [false, true]) Deno.test(`${mode} extraction reads pending pages despite a ${cached ? "cached" : "new"} premature complete plan`, async () => {
   const fixture = setup();
-  const runner = createExtractionRunner({
-    ...fixture.dependencies,
-    planner: {
-      async plan() { return { ok: true, value: { revision: 1, frontier: ["https://example.test/a"], coverageGoals: [], unresolvedGaps: [], stopDecision: { decision: "complete", rationale: "The agent incorrectly declared completion before observing the frontier.", evidenceUrls: [], unresolvedGapIds: [] } } }; },
-      async replan() { throw new Error("must not replan"); },
-    },
-  });
-  const result = await runner.run({ ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1, rootUrl: "https://example.test", startedAtMs: 0, deadlineAtMs: 1_800_000 });
-  assertEquals(result.ok, false);
-  if (!result.ok) assertEquals(result.error.kind, "ExtractionCoverageIncomplete");
+  const command = { ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1, rootUrl: "https://example.test", startedAtMs: 0, deadlineAtMs: 1_800_000 };
+  const loaded = await fixture.dependencies.scratchpad.load(command);
+  if (!loaded.ok) throw new Error("Fixture load failed.");
+  const planned = await fixture.dependencies.planner.plan({ rootUrl: command.rootUrl, scratchpad: loaded.value });
+  if (!planned.ok) throw new Error("Fixture plan failed.");
+  const plan = { ...planned.value, stopDecision: { ...planned.value.stopDecision, decision: /** @type {const} */ ("complete"), rationale: "The model mistakes listing the frontier for processing it." } };
+  const orderedUrls = mode === "discovered" ? undefined : plan.frontier;
+  const batchAcquirer = mode === "material" ? { key: "authorized-material", async fetchBatch() { const page = await fixture.dependencies.acquirer.fetchPage({ url: plan.frontier[0], rootUrl: command.rootUrl, plan }); return page.ok ? { ok: /** @type {const} */ (true), value: [page.value] } : page; } } : undefined;
+  if (cached) await fixture.dependencies.scratchpad.save({ ...loaded.value, revision: 2, frontier: plan.frontier, planCheckpoint: { batchKey: batchAcquirer?.key ?? null, orderedUrls: orderedUrls ?? null, retryGeneration: null, plan } });
+  let plans = 0;
+  const runner = createExtractionRunner({ ...fixture.dependencies, orderedUrls, batchAcquirer, planner: {
+    ...fixture.dependencies.planner,
+    async plan() { plans++; return { ok: true, value: plan }; },
+  } });
+  const result = await runner.run(command);
+  assertEquals(result.ok, true);
+  if (!result.ok) return;
+  assertEquals(result.value.state, "completed");
+  assertEquals(result.value.pagesProcessed, mode === "discovered" ? 3 : 1);
+  assertEquals(fixture.points.length, 1);
+  assertEquals(result.value.scratchpad.processedUrls.join(","), mode === "discovered" ? "https://example.test/a,https://example.test/b,https://example.test/c" : "https://example.test/a");
+  assertEquals(plans, cached ? 0 : 1);
 });
 
 Deno.test("extraction persists bounded page notes and durable scraper memory checkpoints", async () => {
