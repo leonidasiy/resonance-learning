@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createKnowledgeWorkflowLogger } from "../worker/knowledge-workflow-logging.js";
+import { createKnowledgeWorkflowLogger, workflowPersistenceDiagnostic } from "../worker/knowledge-workflow-logging.js";
 
 /** @template T @param {T} actual @param {T} expected */
 function assertEquals(actual, expected) { if (!Object.is(actual, expected)) throw new Error(`Expected ${String(expected)}, received ${String(actual)}.`); }
@@ -115,4 +115,8 @@ Deno.test('concurrent stages retain independent timers and cost fields stay nume
   assertEquals(records[2].durationMs,30);assertEquals(records[3].durationMs,40);
   assertEquals(resultOk(logger({event:'knowledge-model-usage',costNanodollars:2000})),true);
   assertEquals(resultErrorKind(logger(/** @type {never} */({event:'knowledge-model-usage',costNanodollars:'private'}))),'KnowledgeWorkflowLogEntryInvalid');
+});
+
+Deno.test("D1 daily quotas retain a safe distinct diagnostic",()=>{
+ for(const kind of ["read","write"])assertEquals(workflowPersistenceDiagnostic(new Error(`D1_ERROR: Your account has exceeded D1's free tier daily row ${kind} limit. Private details must not be logged.`)),"d1-daily-quota");
 });

@@ -75,10 +75,10 @@
 
 /**
  * @typedef {{
- *   readonly findNamespace: (id: string) => Promise<AgentMemoryNamespace | null>,
+ *   readonly findNamespace: (id: string, ownerId: string) => Promise<AgentMemoryNamespace | null>,
  *   readonly createNamespace: (namespace: AgentMemoryNamespace) => Promise<null>,
- *   readonly appendRecord: (record: AgentMemoryRecord) => Promise<null>,
- *   readonly listRecords: (namespaceId: string) => Promise<readonly AgentMemoryRecord[]>,
+ *   readonly appendRecord: (record: AgentMemoryRecord, ownerId: string) => Promise<null>,
+ *   readonly listRecords: (namespaceId: string, ownerId: string) => Promise<readonly AgentMemoryRecord[]>,
  *   readonly appendHandoff: (handoff: SharedHandoff) => Promise<null>
  * }} AgentMemoryRepository
  */
@@ -189,7 +189,7 @@ export function createAgentMemoryStore(dependencies) {
       logger({ event: "agent-memory.entry", ownerId: namespace.ownerId, runId: namespace.runId, role: namespace.role });
       let existing;
       try {
-        existing = await repository.findNamespace(namespace.id);
+        existing = await repository.findNamespace(namespace.id, namespace.ownerId);
       } catch {
         logger({ event: "agent-memory.failure", ownerId: namespace.ownerId, runId: namespace.runId, role: namespace.role, failureKind: "AgentMemoryPersistenceFailed" });
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
@@ -223,7 +223,7 @@ export function createAgentMemoryStore(dependencies) {
       if (!isNonEmptyText(command.sourceEventId)) return { ok: false, error: { kind: "AgentMemoryCommandInvalid", field: "sourceEventId" } };
       let stored;
       try {
-        stored = await repository.findNamespace(namespace.id);
+        stored = await repository.findNamespace(namespace.id, namespace.ownerId);
       } catch {
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
       }
@@ -233,7 +233,7 @@ export function createAgentMemoryStore(dependencies) {
       }
       const record = /** @type {AgentMemoryRecord} */ ({ ...command, namespaceId: namespace.id, occurredAt: now() });
       try {
-        await repository.appendRecord(record);
+        await repository.appendRecord(record, namespace.ownerId);
       } catch {
         logger({ event: "agent-memory.failure", ownerId: namespace.ownerId, runId: namespace.runId, role: namespace.role, failureKind: "AgentMemoryPersistenceFailed" });
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
@@ -247,13 +247,13 @@ export function createAgentMemoryStore(dependencies) {
       if (!isNamespace(namespace)) return { ok: false, error: { kind: "AgentMemoryIsolationViolation" } };
       let stored;
       try {
-        stored = await repository.findNamespace(namespace.id);
+        stored = await repository.findNamespace(namespace.id, namespace.ownerId);
       } catch {
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
       }
       if (stored === null || !sameNamespace(namespace, stored)) return { ok: false, error: { kind: "AgentMemoryIsolationViolation" } };
       try {
-        return { ok: true, value: await repository.listRecords(namespace.id) };
+        return { ok: true, value: await repository.listRecords(namespace.id, namespace.ownerId) };
       } catch {
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
       }
@@ -274,8 +274,8 @@ export function createAgentMemoryStore(dependencies) {
       let producer;
       let consumer;
       try {
-        producer = await repository.findNamespace(command.producer.id);
-        consumer = await repository.findNamespace(command.consumer.id);
+        producer = await repository.findNamespace(command.producer.id, command.producer.ownerId);
+        consumer = await repository.findNamespace(command.consumer.id, command.consumer.ownerId);
       } catch {
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
       }

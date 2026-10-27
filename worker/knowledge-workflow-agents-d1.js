@@ -52,11 +52,11 @@ export class D1AgentMemoryRepository {
     this.#logger = dependencies.logger;
   }
 
-  /** @param {string} id @returns {Promise<AgentMemoryNamespace | null>} */
-  async findNamespace(id) {
-    if (!text(id)) throw new TypeError("Agent namespace ID is invalid.");
+  /** @param {string} id @param {string} ownerId @returns {Promise<AgentMemoryNamespace | null>} */
+  async findNamespace(id, ownerId) {
+    if (!text(id) || !text(ownerId)) throw new TypeError("Agent namespace ID is invalid.");
     try {
-      const row = await this.#database.prepare("SELECT owner_id, run_id, namespace_id, role, mode, human_approval_id, created_at FROM agent_memory_namespaces WHERE namespace_id = ? LIMIT 1").bind(id).first();
+      const row = await this.#database.prepare("SELECT owner_id, run_id, namespace_id, role, mode, human_approval_id, created_at FROM agent_memory_namespaces WHERE owner_id = ? AND namespace_id = ? LIMIT 1").bind(ownerId, id).first();
       return row === null ? null : namespaceFromRow(row) ?? (() => { throw new TypeError("Stored agent namespace is invalid."); })();
     } catch (error) {
       this.#logger({ event: "agent-memory-d1-failure", failureKind: "AgentMemoryPersistenceFailed" });
@@ -77,10 +77,11 @@ export class D1AgentMemoryRepository {
     }
   }
 
-  /** @param {AgentMemoryRecord} record @returns {Promise<null>} */
-  async appendRecord(record) {
+  /** @param {AgentMemoryRecord} record @param {string} ownerId @returns {Promise<null>} */
+  async appendRecord(record, ownerId) {
+    if (!text(ownerId)) throw new TypeError("Agent owner ID is invalid.");
     try {
-      const result = await this.#database.prepare("INSERT INTO agent_memory_records (owner_id, namespace_id, record_id, kind, payload_json, occurred_at) VALUES ((SELECT owner_id FROM agent_memory_namespaces WHERE namespace_id = ?), ?, ?, ?, ?, ?)").bind(record.namespaceId, record.namespaceId, record.id, record.kind, JSON.stringify({ visibility: record.visibility, retention: record.retention, integrityVersion: record.integrityVersion, sourceEventId: record.sourceEventId, payload: record.payload }), record.occurredAt).run();
+      const result = await this.#database.prepare("INSERT INTO agent_memory_records (owner_id, namespace_id, record_id, kind, payload_json, occurred_at) VALUES ((SELECT owner_id FROM agent_memory_namespaces WHERE owner_id = ? AND namespace_id = ?), ?, ?, ?, ?, ?)").bind(ownerId, record.namespaceId, record.namespaceId, record.id, record.kind, JSON.stringify({ visibility: record.visibility, retention: record.retention, integrityVersion: record.integrityVersion, sourceEventId: record.sourceEventId, payload: record.payload }), record.occurredAt).run();
       if (!inserted(result)) throw new Error("Agent memory record insert was not committed.");
       return null;
     } catch (error) {
@@ -89,11 +90,11 @@ export class D1AgentMemoryRepository {
     }
   }
 
-  /** @param {string} namespaceId @returns {Promise<readonly AgentMemoryRecord[]>} */
-  async listRecords(namespaceId) {
-    if (!text(namespaceId)) throw new TypeError("Agent namespace ID is invalid.");
+  /** @param {string} namespaceId @param {string} ownerId @returns {Promise<readonly AgentMemoryRecord[]>} */
+  async listRecords(namespaceId, ownerId) {
+    if (!text(namespaceId) || !text(ownerId)) throw new TypeError("Agent namespace ID is invalid.");
     try {
-      const result = await this.#database.prepare("SELECT namespace_id, record_id, kind, payload_json, occurred_at FROM agent_memory_records WHERE namespace_id = ? ORDER BY occurred_at, record_id").bind(namespaceId).all();
+      const result = await this.#database.prepare("SELECT namespace_id, record_id, kind, payload_json, occurred_at FROM agent_memory_records WHERE owner_id = ? AND namespace_id = ? ORDER BY occurred_at, record_id").bind(ownerId, namespaceId).all();
       if (result.success !== true) throw new Error("Agent memory records could not be read.");
       const records = [];
       for (const row of result.results) {

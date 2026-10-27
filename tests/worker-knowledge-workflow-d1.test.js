@@ -52,13 +52,13 @@ Deno.test("D1 agent repositories preserve namespace scope, event pairing, and co
   const fixture = database();
   const logger = () => {};
   const memory = new D1AgentMemoryRepository({ database: fixture, logger });
-  const namespace = await memory.findNamespace("namespace-a");
+  const namespace = await memory.findNamespace("namespace-a", "owner-a");
   if (namespace === null) throw new Error("Expected namespace.");
   assertEquals(namespace.ownerId, "owner-a");
   assertEquals(namespace.mode, "enabled");
   await memory.createNamespace(namespace);
-  await memory.appendRecord({ id: "record-a", namespaceId: "namespace-a", kind: "working-memory", visibility: "private", retention: "run", integrityVersion: 1, sourceEventId: "event-a", occurredAt: "2026-08-13T00:00:00.000Z", payload: { value: "bounded" } });
-  const records = await memory.listRecords("namespace-a");
+  await memory.appendRecord({ id: "record-a", namespaceId: "namespace-a", kind: "working-memory", visibility: "private", retention: "run", integrityVersion: 1, sourceEventId: "event-a", occurredAt: "2026-08-13T00:00:00.000Z", payload: { value: "bounded" } }, "owner-a");
+  const records = await memory.listRecords("namespace-a", "owner-a");
   assertEquals(records.length, 1);
   assertEquals(records[0].sourceEventId, "event-a");
   await memory.appendHandoff({ id: "handoff-a", producer: namespace, consumer: { ...namespace, id: "namespace-b", role: "question-generator" }, sourceEventId: "event-a", occurredAt: "2026-08-13T00:00:00.000Z", payload: { knowledgeId: "knowledge-a" } });

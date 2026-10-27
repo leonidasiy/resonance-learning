@@ -93,6 +93,7 @@ export function workflowPersistenceDiagnostic(error) {
   const visited=new Set();
   while(error instanceof Error&&!visited.has(error)) {
     visited.add(error);
+    if(/exceeded D1.s free tier daily row (read|write) limit/i.test(error.message))return "d1-daily-quota";
     if(/Too many subrequests|Too many API requests by single Worker invocation/i.test(error.message))return "subrequest-limit";
     if(error.message.includes("SQLITE_CONSTRAINT"))return "sqlite-constraint";
     if(error.message.includes("SQLITE_TOOBIG"))return "sqlite-too-big";
