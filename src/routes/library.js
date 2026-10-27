@@ -171,7 +171,7 @@ function renderSourceProgress(status,escapeHtml){
   const total=progress?.totalPages;
   const meter=shellMarkup(69,total??1,total==null?(active?"":'value="0"'):`value="${pageCount}"`,active?"library-processing-spinner":"",`${pageCount}${total==null?"":` of ${total}`}`,active&&progress?.sectionTitle?` · ${escapeHtml(progress.sectionTitle)}`:"");
   const summaries=points.length?shellMarkup(52,points.map(point=>shellMarkup(51,escapeHtml(point.summary))).join("")):shellMarkup(knowledgeCount?54:53);
-  return shellMarkup(49,sourceId,sourceId,(active?shellMarkup(65)+" ":"")+escapeHtml(stage),escapeHtml(shellMarkup(66,knowledgeCount,knowledgeCount===1?"point":"points",questions)),meter+(points.length?shellMarkup(70,escapeHtml(points.at(-1)?.summary??"")):""),knowledgeCount,summaries,active?shellMarkup(55):"");
+  return shellMarkup(49,sourceId,sourceId,escapeHtml(stage),escapeHtml(shellMarkup(66,knowledgeCount,knowledgeCount===1?"point":"points",questions)),meter+(points.length?shellMarkup(70,escapeHtml(points.at(-1)?.summary??"")):""),knowledgeCount,summaries,active?shellMarkup(55):"");
 }
 
 /** @param {LibrarySource} source @param {WorkflowSourceStatus | null} status @returns {string | null} */

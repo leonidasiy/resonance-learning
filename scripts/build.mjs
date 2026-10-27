@@ -23,9 +23,9 @@ export const ARTIFACT_BUDGETS = Object.freeze({
   }),
   stylesheet: Object.freeze({
     label: "CSS",
-    // Read control: measured feature CSS allowance approved 2026-10-19.
-    rawBytes: 45_082,
-    gzipBytes: 9_823,
+    // Includes the requested animated processing card (2026-10-27): +2,790 raw / +533 gzip bytes.
+    rawBytes: 47_872,
+    gzipBytes: 10_356,
   }),
   pdfRenderer: Object.freeze({
     label: "On-demand PDF renderer",

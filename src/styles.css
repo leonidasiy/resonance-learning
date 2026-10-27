@@ -299,6 +299,39 @@ pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .library-workflow-progress progress { width: 100%; height: 8px; accent-color: var(--action); }
 .library-knowledge { margin: 16px 0; padding: 16px; background: var(--surface-subtle); }
 .library-knowledge h4 { margin: 0; }
+.library-workflow-progress { padding: 28px; border: 1px solid var(--border); border-top: 3px solid var(--action); border-radius: var(--panel-radius); background: var(--surface); }
+.processing-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); align-items: center; gap: 32px; padding-bottom: 24px; }
+.processing-heading h4 { font: 500 clamp(25px, 3vw, 34px)/1.2 var(--font-display); }
+.processing-heading [role=status] { margin: 16px 0 0; font-size: 14px; line-height: 1.8; }
+.processing-flow { display: block; width: 100%; overflow: visible; color: var(--action); }
+.flow-paper { fill: var(--surface-subtle); stroke: currentColor; stroke-width: 1.5; }
+.flow-ghost { fill: none; stroke: currentColor; opacity: .2; }
+.flow-ink { fill: none; stroke: var(--text-muted); stroke-linecap: round; stroke-width: 2; opacity: .55; }
+.flow-track { fill: none; stroke: currentColor; stroke-dasharray: 2 6; opacity: .3; }
+.flow-connections, .flow-choice { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.flow-node, .flow-answer, .flow-particle { fill: currentColor; }
+.flow-particle { opacity: 0; }
+.flow-labels { fill: var(--text-muted); text-anchor: middle; font-size: 11px; }
+.library-workflow-progress:has(.library-processing-spinner) .flow-particle { animation: knowledge-transfer 3.6s ease-in-out infinite; }
+.library-workflow-progress:has(.library-processing-spinner) .flow-particle-next { animation-delay: 1.8s; }
+.library-workflow-progress:has(.library-processing-spinner) .flow-page { animation: knowledge-page 3.6s ease-in-out infinite; }
+.library-workflow-progress:has(.library-processing-spinner) .flow-quiz { animation: knowledge-page 3.6s 1.8s ease-in-out infinite; }
+.library-workflow-progress:has(.library-processing-spinner) .flow-ink { stroke-dasharray: 44; animation: knowledge-ink 3.6s ease-in-out infinite; }
+.library-workflow-progress:has(.library-processing-spinner) .flow-quiz .flow-ink { animation-delay: 1.8s; }
+@keyframes knowledge-transfer { 0%, 15% { opacity: 0; transform: translateX(0); } 30%, 60% { opacity: 1; } 75%, 100% { opacity: 0; transform: translateX(60px); } }
+@keyframes knowledge-page { 0%, 75%, 100% { transform: translateY(0); } 35% { transform: translateY(-5px); } }
+@keyframes knowledge-ink { 0%, 10%, 100% { stroke-dashoffset: 44; } 40%, 85% { stroke-dashoffset: 0; } }
+.processing-evidence { padding: 20px 0 24px; border-top: 1px solid var(--border); }
+.processing-evidence > p { margin: 8px 0 0; }
+.processing-evidence .processing-latest { margin-top: 24px; padding-left: 16px; border-left: 2px solid var(--action); max-width: 80ch; font-size: 15px; line-height: 1.7; color: var(--text); }
+.processing-latest span { display: block; margin-bottom: 6px; font-size: 12px; color: var(--text-muted); }
+.library-workflow-progress > details { border-top: 1px solid var(--border); }
+.library-workflow-progress > .settings-form-note { margin: 16px 0 0; }
+@media (max-width: 800px) {
+  .library-workflow-progress { padding: 20px; }
+  .processing-hero { grid-template-columns: minmax(0, 1fr); gap: 24px; }
+  .processing-flow { max-width: 360px; justify-self: center; }
+}
 .discover-notice { padding: 16px; margin-bottom: 24px; border-left: 3px solid var(--signal-three); background: var(--attention-soft); }
 .discover-notice.error { border-color: var(--danger); background: var(--danger-soft); }
 .discover-notice p { margin: 0; }
