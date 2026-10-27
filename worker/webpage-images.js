@@ -68,7 +68,8 @@ export async function associateWebpageImages(deps) {
    const windowBudget=window===0?{ok:true}:await deps.budget.reserve({key:`window:${batch.map(i=>i.id).join(',')}:${window}`,evaluations:batch.length,decodedBytes:0,timeoutMs:ACQUISITION_POLICY.operationMilliseconds});
    if(!windowBudget.ok){results.forEach(r=>{r.status='not-evaluated';r.failureKind=windowBudget.error.kind;r.failureKinds=[...new Set([...(r.failureKinds??[]),/** @type {string} */(r.failureKind)])];});return;}
    const matchResponseSchema={name:matcherSchema.name,schema:{...matcherSchema.schema,properties:{matches:{...matcherSchema.schema.properties.matches,minItems:facts.length,maxItems:facts.length,items:{anyOf:matcherSchema.schema.properties.matches.items.anyOf.map(v=>({...v,properties:{...v.properties,normalizedHash:{type:'string',enum:facts.map(f=>f.normalizedHash)}}}))}}}}};
-   const matched=await generate({phase:'match',taskId:'webpage-image-match',systemPrompt:deps.deferQualityReview?pendingMatcherPrompt:matcherPrompt,input:{operation:'match-webpage-images',sourceMode:'webpage-text',facts,candidates},attachments,responseSchema:matchResponseSchema,maxOutputTokens:4096});
+   // Complete-page extraction can exceed the old 4K ceiling for the required per-fact entries.
+   const matched=await generate({phase:'match',taskId:'webpage-image-match',systemPrompt:deps.deferQualityReview?pendingMatcherPrompt:matcherPrompt,input:{operation:'match-webpage-images',sourceMode:'webpage-text',facts,candidates},attachments,responseSchema:matchResponseSchema,maxOutputTokens:32768});
    if(!matched.ok){results.forEach(r=>{r.status='not-evaluated';r.failureKind=matched.error.kind;r.failureKinds=[...new Set([...(r.failureKinds??[]),/** @type {string} */(r.failureKind)])];});deps.logger({event:'webpage-images-failure',failureKind:matched.error.kind});return;}
    const matches=matched.value.matches;
    const expectedHashes=new Set(facts.map(fact=>fact.normalizedHash));
