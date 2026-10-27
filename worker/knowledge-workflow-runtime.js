@@ -1294,7 +1294,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           if(!textOnly.length)return {ok:true,value:null};
           const ready=await onDrafts({url,responseUrl,contentDigest,title:projection.title,byteCount:payload.byteLength,redirects,links:[],observedAt:dependencies.now(),candidates:textOnly});
           return ready.ok?ready:{ok:false,error:{kind:record(ready.error)&&text(ready.error.causeKind)?ready.error.causeKind:record(ready.error)&&text(ready.error.kind)?ready.error.kind:'KnowledgeReviewFailed'}};
-        },normalizeClaims:true,deferQualityReview,structuredOutput:dependencies.webpageStructuredOutput,taskId:`scraper-observe-${url}${retrySuffix}`,input:{url:acquired.value.responseUrl,evidence:acquired.value.evidence,coverageGoals:plan.coverageGoals,lessOften:preferences.value.lessOften,previousKnowledge},maxOutputTokens:32768,
+        },technicalRetries:dependencies.technicalRetries,normalizeClaims:true,deferQualityReview,structuredOutput:dependencies.webpageStructuredOutput,taskId:`scraper-observe-${url}${retrySuffix}`,input:{url:acquired.value.responseUrl,evidence:acquired.value.evidence,coverageGoals:plan.coverageGoals,lessOften:preferences.value.lessOften,previousKnowledge},maxOutputTokens:32768,
           generate:imageModel,
           logger:dependencies.logger});
         if (!observed.ok) return observed;

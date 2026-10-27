@@ -158,3 +158,32 @@ for(const contextReceipt of ['omitted','incorrect','missing-target'])test(`cover
  assert.deepEqual(result.value.blockCoverage.map(c=>c.blockId),cells.map(c=>c.id));
  assert.equal(new Set(result.value.candidates.map(c=>c.normalizedHash)).size,result.value.candidates.length);
 });
+
+for(const defect of ['coverage','compact-units'])test(`invalid ${defect} review is repaired with feedback without replaying successful extraction`,async()=>{
+ const cache=new Map(),calls=[],model=responder();
+ const generate=async command=>{
+  if(cache.has(command.taskId))return structuredClone(cache.get(command.taskId));
+  calls.push(command);
+  const response=await model(command);
+  if(command.phase==='normalization'&&!command.input.validationFailure){
+   if(defect==='coverage')response.value.blockCoverage.pop();
+   else response.value.reviews[0].relationshipUnits.push({...response.value.reviews[0].relationshipUnits[0]});
+  }
+  cache.set(command.taskId,structuredClone(response));return response;
+ };
+ const result=await run(evidence,generate);assert(result.ok,JSON.stringify(result));
+ assert.equal(calls.filter(c=>c.phase==='extraction').length,1);
+ const reviews=calls.filter(c=>c.phase==='normalization');assert.equal(reviews.length,2);
+ assert.equal(reviews[1].input.validationFailure.kind,defect==='coverage'?'WebpageCoverageIncomplete':'WebpageClaimBoundariesInvalid');
+ assert(reviews[1].input.validationFailure.previousOutput.blockCoverage);
+ const ids=calls.map(c=>c.taskId);assert((await run(evidence,generate)).ok);assert.deepEqual(calls.map(c=>c.taskId),ids,'Resume reuses the repaired review and all paid history');
+});
+for(const technicalRetries of [true,false])test(`invalid coverage exhausts the existing bounded technical policy: ${technicalRetries}`,async()=>{
+ let reviews=0,extractions=0;const model=responder();
+ const result=await requestWebpageFacts({requireCoverage:true,normalizeClaims:true,deferQualityReview:true,technicalRetries,taskId:'bounded-repair',input:{url,evidence,coverageGoals:[]},maxOutputTokens:4096,logger:()=>{},generate:async command=>{
+  if(command.phase==='extraction')extractions++;
+  const response=await model(command);if(command.phase==='normalization'){reviews++;response.value.blockCoverage.pop();}return response;
+ }});
+ assert.equal(result.ok,false);assert.equal(result.error.kind,'WebpageCoverageIncomplete');assert.equal(result.error.technicalRetriesExhausted,true);assert.equal(reviews,technicalRetries?4:1);
+ assert.equal(extractions,1,'Successful extraction stays local during review repair');
+});

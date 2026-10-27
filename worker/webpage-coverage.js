@@ -82,7 +82,15 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
     const contextIds=new Set(blocks.filter(b=>!targetIds.has(b.id)).map(b=>b.id));
     const sectionIds=new Set(blocks.map(b=>b.sectionId));
     /** @type {BlockCoverage[]|null} */let audited=null;
-    const result=await batch({...dependencies,requireCoverage:false,taskId:`${dependencies.taskId}:coverage-v1:${index+1}`,input:{...input,evidence:{...input.evidence,blocks,headings:input.evidence.headings.filter(h=>sectionIds.has(h.sectionId)),images:[]}},generate:async command=>{
+    /** @type {Awaited<ReturnType<FactRequest['generate']>>|undefined} */let extracted;
+    /** @type {Record<string,unknown>|undefined} */let previousOutput;
+    /** @type {{kind:string,previousOutput:Record<string,unknown>}|undefined} */let validationFailure;
+    /** @type {Awaited<ReturnType<typeof batch>>} */let result;
+    /** @type {BlockCoverage[]} */let completedCoverage;
+    const maximumAttempts=dependencies.technicalRetries===false?1:4;
+    for(let attempt=1;;attempt++){
+    audited=null;
+    result=await batch({...dependencies,requireCoverage:false,taskId:`${dependencies.taskId}:coverage-v1:${index+1}`,input:{...input,evidence:{...input.evidence,blocks,headings:input.evidence.headings.filter(h=>sectionIds.has(h.sectionId)),images:[]}},generate:async command=>{
       const task=/** @type {Record<string,unknown>} */(command.input);
       const citations=/** @type {{sourceId:string,reference:unknown}[]} */(task.citationSources??[]);
       const sourceBlocks=/** @type {Record<string,unknown>[]} */(task.sourceBlocks??[]);
@@ -93,8 +101,11 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
         const shape=/** @type {{required:string[],properties:Record<string,unknown>}} */(schema.schema);
         shape.required.push('blockCoverage');shape.properties.blockCoverage=coverageSchema(targets);
       }
-      const generated=await dependencies.generate({...command,input:enriched,systemPrompt:command.systemPrompt+(normalizing?coveragePrompt+(contextIds.size?'\nBlocks marked coverageRequired:false repeat already-audited context. They remain available for exact citations, but do not return blockCoverage entries for them. Audit every other block.':''):''),...(schema?{responseSchema:schema}:{})});
+      if(command.phase==='extraction'&&extracted)return structuredClone(extracted);
+      const generated=await dependencies.generate({...command,...(normalizing&&validationFailure?{taskId:`${command.taskId}:validation-${attempt}`} : {}),input:{...enriched,...(normalizing&&validationFailure?{validationFailure}: {})},systemPrompt:command.systemPrompt+(normalizing&&validationFailure?'\nYour previous response failed application validation. Repair the full review using validationFailure below. Keep every required block accounted for with exact final draft citations. candidates:null requires exactly one relationshipUnits entry for the unchanged parent; otherwise return distinct source-supported children, one per unit. Do not fabricate support or discard educational blocks to pass validation.':'')+(normalizing?coveragePrompt+(contextIds.size?'\nBlocks marked coverageRequired:false repeat already-audited context. They remain available for exact citations, but do not return blockCoverage entries for them. Audit every other block.':''):''),...(schema?{responseSchema:schema}:{})});
+      if(command.phase==='extraction'&&generated.ok)extracted=structuredClone(generated);
       if(!generated.ok||!normalizing)return generated;
+      previousOutput=structuredClone(generated.value);
       const value=structuredClone(generated.value);
       if(Array.isArray(value.blockCoverage))value.blockCoverage=value.blockCoverage.filter(entry=>!record(entry)||!text(entry.blockId)||!contextIds.has(entry.blockId));
       const reviews=Array.isArray(value.reviews)?value.reviews:[];
@@ -125,14 +136,22 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       const {blockCoverage,...payload}=value;
       return {ok:true,value:payload};
     }});
-    if(!result.ok)return result;
-    if(audited===null||/** @type {BlockCoverage[]} */(audited).some(entry=>entry.candidateHashes.some(hash=>!result.value.candidates.some(c=>c.normalizedHash===hash)&&!result.value.partialIssues.some(issue=>issue.normalizedHash===hash&&['WebpageCandidateGroundingRejected','WebpageCandidateUsefulnessRejected'].includes(issue.kind)))))return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
+    if(result.ok){
+      const facts=result.value,inspected=/** @type {BlockCoverage[]|null} */(audited);
+      if(inspected!==null&&!inspected.some(entry=>entry.candidateHashes.some(hash=>!facts.candidates.some(c=>c.normalizedHash===hash)&&!facts.partialIssues.some(issue=>issue.normalizedHash===hash&&['WebpageCandidateGroundingRejected','WebpageCandidateUsefulnessRejected'].includes(issue.kind))))){completedCoverage=inspected;break;}
+      result={ok:false,error:{kind:'WebpageCoverageIncomplete'}};
+    }
+    if(!['WebpageCoverageIncomplete','WebpageClaimBoundariesInvalid'].includes(result.error.kind))return result;
+    dependencies.logger({event:attempt===maximumAttempts?'webpage-facts-validation-failure':'webpage-facts-validation-retry',failureKind:result.error.kind});
+    if(attempt===maximumAttempts)return {ok:false,error:{...result.error,technicalRetriesExhausted:true,technicalAttempts:maximumAttempts}};
+    validationFailure={kind:result.error.kind,previousOutput:previousOutput??{}};
+    }
     for(const candidate of result.value.candidates){
       const existing=candidates.find(c=>c.normalizedHash===candidate.normalizedHash);
       if(existing&&existing.summary!==candidate.summary)return {ok:false,error:{kind:'WebpageFactsInvalid'}};
       if(!existing)candidates.push(candidate);
     }
-    coverage.push(.../** @type {BlockCoverage[]} */(audited).filter(entry=>targetIds.has(entry.blockId)));partialIssues.push(...result.value.partialIssues);notes.push(result.value.notes);
+    coverage.push(...completedCoverage.filter(entry=>targetIds.has(entry.blockId)));partialIssues.push(...result.value.partialIssues);notes.push(result.value.notes);
     // One bounded early wave overlaps later extraction; remaining drafts stay in the complete observation.
     if(ready===undefined&&result.value.candidates.length&&dependencies.onDrafts)ready=dependencies.onDrafts(result.value.candidates).catch(()=>({ok:false,error:{kind:'KnowledgeReviewFailed'}}));
   }
