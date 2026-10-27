@@ -92,3 +92,19 @@ test('compact unchanged reviews reject aliases that collide with another claim i
   });
   assert.equal(result.ok,false);assert.equal(result.error.kind,'WebpageClaimBoundariesInvalid');
 });
+test('coverage retains a valid cited relationship and removes an extra association to an uncited draft',async()=>{
+  const model=responder();const result=await run(evidence,async command=>{
+    const r=await model(command);
+    if(command.phase==='normalization')r.value.blockCoverage[1].candidateHashes.unshift(r.value.reviews[0].sourceNormalizedHash);
+    return r;
+  });
+  assert(result.ok);assert.deepEqual(result.value.blockCoverage[1].candidateHashes,['block:2']);
+});
+test('coverage still fails when its only draft does not cite the claimed source block',async()=>{
+  const model=responder();const result=await run(evidence,async command=>{
+    const r=await model(command);
+    if(command.phase==='normalization')r.value.blockCoverage[1].candidateHashes=[r.value.reviews[0].sourceNormalizedHash];
+    return r;
+  });
+  assert.equal(result.ok,false);assert.equal(result.error.kind,'WebpageCoverageIncomplete');
+});

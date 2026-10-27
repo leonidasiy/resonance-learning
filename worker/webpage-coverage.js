@@ -95,6 +95,11 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       }
       if(Array.isArray(value.blockCoverage))for(const entry of value.blockCoverage)if(record(entry)&&Array.isArray(entry.candidateHashes))entry.candidateHashes=entry.candidateHashes.map(hash=>unchangedAliases.get(hash)??hash);
       const finalCandidates=[...reviews.flatMap(r=>record(r)?r.candidates===null?originals.filter(c=>record(c)&&c.normalizedHash===r.sourceNormalizedHash):Array.isArray(r.candidates)?r.candidates:[]:[]),...(Array.isArray(value.additionalCandidates)?value.additionalCandidates:[])];
+      // A receipt needs a genuinely cited draft; discard extra unsupported associations without inventing support.
+      if(Array.isArray(value.blockCoverage))for(const entry of value.blockCoverage)if(record(entry)&&entry.disposition==='candidates'&&Array.isArray(entry.candidateHashes)){
+        const block=blocks.find(b=>b.id===entry.blockId);
+        if(block)entry.candidateHashes=entry.candidateHashes.filter(hash=>isCompleteBlockCoverage([{...entry,candidateHashes:[hash]}],[block],citations,finalCandidates));
+      }
       if(!isCompleteBlockCoverage(value.blockCoverage,blocks,citations,finalCandidates))return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
       audited=structuredClone(value.blockCoverage);
       const {blockCoverage,...payload}=value;
