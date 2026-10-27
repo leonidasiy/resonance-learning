@@ -16,10 +16,10 @@ export const ARTIFACT_BUDGETS = Object.freeze({
   }),
   aggregateJavascript: Object.freeze({
     label: "Aggregate JavaScript",
-    // Measured panel-cache feature allowance approved 2026-10-19.
+    // Measured inline-link feature allowance approved 2026-10-27.
     // Initial and lazy-chunk limits remain unchanged.
-    rawBytes: 235_417,
-    gzipBytes: 78_014,
+    rawBytes: 236_448,
+    gzipBytes: 78_444,
   }),
   stylesheet: Object.freeze({
     label: "CSS",

@@ -1,5 +1,6 @@
 // @ts-check
 import { captureCitationSources } from './webpage-citations.js';
+import { isInlineLinks } from '../src/features/knowledge-workflows/inline-links.js';
 export { quoteHash } from './webpage-citations.js';
 import { isKnowledgeCandidate } from '../src/features/knowledge-workflows/extraction.js';
 /** @typedef {import('../acquisition/contracts.ts').WebpageEvidence} WebpageEvidence */
@@ -38,6 +39,7 @@ const text=value=>typeof value==='string'&&value.trim()!=='';
 export function isWebpageEvidence(value) {
   if(!record(value)||!text(value.url)||!URL.canParse(value.url)||new URL(value.url).protocol!=='https:'||!Array.isArray(value.blocks)||!Array.isArray(value.headings)||!Array.isArray(value.images)||!Array.isArray(value.warnings)||!value.warnings.every(text)) return false;
   if(value.blocks.some(b=>!record(b)||!text(b.id)||!text(b.locator)||!text(b.sectionId)||!text(b.text)||(b.kind!=='text'&&b.kind!=='caption')||(b.figureId!==null&&!text(b.figureId)))) return false;
+  if(value.blocks.some(b=>b.inlineLinks!==undefined&&!isInlineLinks(b.inlineLinks,b.text)))return false;
   if(new Set(value.blocks.map(b=>b.id)).size!==value.blocks.length||new Set(value.blocks.map(b=>b.locator)).size!==value.blocks.length) return false;
   const blocks=value.blocks;
   return value.headings.every(h=>record(h)&&text(h.id)&&text(h.sectionId)&&text(h.locator)&&typeof h.text==='string'&&Number.isInteger(h.level)&&Number(h.level)>=1&&Number(h.level)<=6)&&new Set(value.images.map(i=>record(i)?i.id:null)).size===value.images.length&&value.images.every(i=>record(i)&&text(i.id)&&text(i.url)&&URL.canParse(i.url)&&new URL(i.url).protocol==='https:'&&!new URL(i.url).username&&!new URL(i.url).password&&Array.isArray(i.occurrences)&&i.occurrences.length>0&&i.occurrences.every(o=>record(o)&&text(o.id)&&text(o.locator)&&text(o.sectionId)&&(o.figureId===null||text(o.figureId))&&(o.captionId===null||blocks.some(b=>b.id===o.captionId&&b.kind==='caption'))&&typeof o.alt==='string')&&Array.isArray(i.occurrenceWindows)&&i.occurrenceWindows.every(w=>Array.isArray(w)&&w.length<=32&&w.every(id=>/** @type {unknown[]} */(i.occurrences).some(o=>record(o)&&o.id===id)))&&JSON.stringify(i.occurrenceWindows.flat())===JSON.stringify(i.occurrences.map(o=>o.id)));
@@ -152,7 +154,7 @@ export async function requestWebpageFacts(dependencies) {
   dependencies.logger({event:'webpage-facts-entry'});
   if(evidence.blocks.length===0) return {ok:true,value:{candidates:[],notes:'No source-written educational text available.',status:'empty',partialIssues:[{kind:'WebpageFactsEmpty',candidateIndex:null,normalizedHash:null,provenance:{url:evidence.url,blockIds:[]}}]}};
   // Freeze this captured source revision before handing any copies to the model port.
-  const sourceBlocks=evidence.blocks.map(b=>Object.freeze({...b}));
+  const sourceBlocks=evidence.blocks.map(b=>Object.freeze({...b,...(b.inlineLinks ? {inlineLinks:Object.freeze(b.inlineLinks.map(link=>Object.freeze({...link})))} : {})}));
   const capture=await captureCitationSources({owner:evidence.url,sources:sourceBlocks.map(b=>({id:b.id,locator:b.locator,text:b.text}))});
   if(!capture.ok)return capture;
   // Models need source text once and opaque references; full provenance stays in the private capture.
@@ -181,7 +183,8 @@ export async function requestWebpageFacts(dependencies) {
         const resolved=capture.value.resolve([anchor.reference]);
         if(!resolved.ok){issue('WebpageCandidateEvidenceInvalid',index,raw);continue candidateLoop;}
         const source=resolved.value[0];
-        anchors.push(Object.freeze({blockId:source.sourceId,quote:source.text,clause:anchor.clause,url:evidence.url,selector:source.locator,quoteDigest:source.quoteDigest}));
+        const inlineLinks=sourceBlocks.find(block=>block.id===source.sourceId)?.inlineLinks;
+        anchors.push(Object.freeze({blockId:source.sourceId,quote:source.text,clause:anchor.clause,url:evidence.url,selector:source.locator,quoteDigest:source.quoteDigest,...(inlineLinks ? {inlineLinks} : {})}));
       }
       const candidate=Object.freeze({summary:raw.summary,normalizedHash:raw.normalizedHash,coverageGoalIds:Object.freeze([...raw.coverageGoalIds]),mediaCandidates:Object.freeze([]),evidenceAnchors:Object.freeze(anchors)});
       if(!isKnowledgeCandidate(candidate)||!hasDistinctCitations(candidate)){issue('WebpageCandidateEvidenceInvalid',index,raw);continue;}

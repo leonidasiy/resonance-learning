@@ -35,3 +35,39 @@ test('full snapshot metadata retains a late illustration after decorative respon
  const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
  try {const page=await browser.newPage();await page.route('**/*',r=>r.abort());await page.setContent(`<main>${Array.from({length:40},(_,i)=>`<img src="https://images.example/decorative-${i}.png">`).join('')}<h2>Rule</h2><p>Ratios compare quantities.</p><figure><img src="https://images.example/actual.png"><figcaption>Quantity labels.</figcaption></figure></main>`);const result=await page.evaluate(collectWebpageEvidence,{url:'https://source.example/',textCharacters:250000,candidateCount:32,occurrenceWindow:32});assert.equal(result.ok,true);assert(result.value.images.some(i=>i.url.endsWith('/actual.png')));assert.equal(result.value.images.length,41);}finally{await browser.close();}
 });
+
+test('Discover DOM capture retains inline destinations through extraction without changing source quotes', async () => {
+  const {requestWebpageFacts,isWebpageEvidence,quoteHash} = await import('../worker/webpage-facts.js');
+  const {isKnowledgeCandidate} = await import('../src/features/knowledge-workflows/extraction.js');
+  const {inlineLinkSpans} = await import('../src/features/knowledge-workflows/inline-links.js');
+  const browser = await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+  try {
+    const page = await browser.newPage();
+    await page.route('**/*', route => route.abort());
+    await page.setContent(`<base href="https://example.test/course/"><main><h1>Harmony</h1><p>A <a href="../terms/chord?q=a&amp;b=c#definition"><em>chord</em></a> combines notes. Read <a href="#examples">examples</a> and <a href="http://archive.example.test/">an archive</a>.</p><figure><img src="https://example.test/diagram.png"><figcaption>See <a href="notation">notation</a>.</figcaption></figure><p><a href="javascript:alert(1)">unsafe</a> <a href="https://user:password@example.test">credentialed</a> <a hidden href="/hidden">hidden</a><a href="/empty"><img alt="not source text"></a></p></main>`);
+    const captured = await page.evaluate(collectWebpageEvidence, {url:'https://example.test/course/lesson',textCharacters:250000,candidateCount:32,occurrenceWindow:32});
+    assert(captured.ok); assert(isWebpageEvidence(captured.value));
+    const evidence = captured.value, block = evidence.blocks[0];
+    assert.equal(block.text, 'A chord combines notes. Read examples and an archive.');
+    assert.deepEqual(block.inlineLinks, [{text:'chord',url:'https://example.test/terms/chord?q=a&b=c#definition'},{text:'examples',url:'https://example.test/course/#examples'},{text:'an archive',url:'http://archive.example.test/'}]);
+    assert.deepEqual(evidence.blocks.find(b=>b.kind==='caption').inlineLinks,[{text:'notation',url:'https://example.test/course/notation'}]);
+    assert.equal(evidence.blocks.at(-1).inlineLinks,undefined);
+    const before = structuredClone(block.inlineLinks);
+    const result = await requestWebpageFacts({taskId:'synthetic-link-retention',input:{url:evidence.url,evidence,coverageGoals:[]},maxOutputTokens:4096,logger:()=>{},generate:async command=>{
+      if (command.phase==='extraction') {
+        // A model port cannot replace captured link destinations.
+        block.inlineLinks[0].url='https://invented.example.test/';
+        return {ok:true,value:{notes:'',candidates:[{summary:'A chord combines notes.',normalizedHash:'chord',coverageGoalIds:[],mediaCandidates:[],evidenceAnchors:[{reference:command.input.citationSources[0].reference,clause:'A chord combines notes.'}]}]}};
+      }
+      return {ok:true,value:{verdicts:[{normalizedHash:'chord',grounded:true}]}};
+    }});
+    assert(result.ok); const candidate=result.value.candidates[0];
+    assert(isKnowledgeCandidate(candidate));
+    assert.equal(candidate.evidenceAnchors[0].quote,block.text);
+    assert.equal(candidate.evidenceAnchors[0].quoteDigest,await quoteHash(block.text));
+    assert.deepEqual(candidate.evidenceAnchors[0].inlineLinks,before);
+    assert.deepEqual(inlineLinkSpans(candidate.summary,before),[{start:2,end:7,url:before[0].url}]);
+    assert(!isWebpageEvidence({...evidence,blocks:[{...block,inlineLinks:[{text:'absent',url:'https://example.test/'}]}]}));
+    assert(!isKnowledgeCandidate({...candidate,evidenceAnchors:[{...candidate.evidenceAnchors[0],inlineLinks:[{text:'chord',url:'javascript:alert(1)'}]}]}));
+  } finally {await browser.close();}
+});

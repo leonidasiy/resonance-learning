@@ -29,6 +29,16 @@ export function collectWebpageEvidence(command) {
     copy.querySelectorAll('img,svg,canvas,script,style,template,noscript,[hidden],[aria-hidden="true"]').forEach(e => e.remove());
     return (copy.textContent ?? '').replace(/\s+/gu, ' ').trim();
   };
+  /** @param {Element} element */
+  const sourceLinks = element => [...(element.closest('a[href]') ? [element.closest('a[href]')] : []), ...element.querySelectorAll('a[href]')].flatMap(anchor => {
+    if (!anchor) return [];
+    if (!visible(anchor)) return [];
+    const text = sourceText(anchor.contains(element) ? element : anchor), href = anchor.getAttribute('href');
+    const base = URL.canParse(document.baseURI) && /^https?:$/u.test(new URL(document.baseURI).protocol) ? document.baseURI : command.url;
+    if (!text || !href || !URL.canParse(href, base)) return [];
+    const url = new URL(href, base);
+    return /^https?:$/u.test(url.protocol) && !url.username && !url.password ? [{text,url:url.href}] : [];
+  });
   const container = document.querySelector('main,article') ?? document.body;
   /** @type {WebpageEvidence['blocks'][number][]} */ const blocks = [];
   /** @type {WebpageEvidence['headings'][number][]} */ const headings = [];
@@ -52,7 +62,8 @@ export function collectWebpageEvidence(command) {
       characters += text.length;
       if (characters > command.textCharacters) return {ok:false,error:{kind:'WebpageTextLimitExceeded'}};
       const figure = element.closest('figure');
-      blocks.push({id,locator:path,sectionId,kind:tag === 'figcaption' ? 'caption' : 'text',text,figureId:figure ? `figure:${locator(figure)}` : null});
+      const inlineLinks = sourceLinks(element);
+      blocks.push({id,locator:path,sectionId,kind:tag === 'figcaption' ? 'caption' : 'text',text,...(inlineLinks.length ? {inlineLinks} : {}),figureId:figure ? `figure:${locator(figure)}` : null});
       continue;
     }
     const image = /** @type {HTMLImageElement} */ (element);

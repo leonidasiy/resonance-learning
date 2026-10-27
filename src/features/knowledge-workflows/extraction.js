@@ -1,4 +1,5 @@
 // @ts-check
+import { isInlineLinks } from './inline-links.js';
 
 /** @template T, E @typedef {{ readonly ok: true, readonly value: T } | { readonly ok: false, readonly error: E }} Result */
 
@@ -36,6 +37,7 @@
  *   readonly blockId?: string,
  *   readonly visibleEvidence?: string,
  *   readonly quote?: string,
+ *   readonly inlineLinks?: readonly import('./inline-links.js').InlineLink[],
  *   readonly clause?: string,
  *   readonly quoteDigest?: string
  * }} EvidenceAnchor
@@ -250,7 +252,7 @@ function validStopDecision(value) {
 }
 
 /** @param {unknown} value @returns {value is EvidenceAnchor} */
-function validAnchor(value) { return isRecord(value) && (JSON.stringify(Object.keys(value).sort()) === JSON.stringify(["selector", "url"]) || JSON.stringify(Object.keys(value).sort()) === JSON.stringify(["selector", "url", "visibleEvidence"]) && text(value.visibleEvidence) && value.visibleEvidence.length <= 500 || JSON.stringify(Object.keys(value).sort()) === JSON.stringify(["quoteDigest", "selector", "url"]) || JSON.stringify(Object.keys(value).sort()) === JSON.stringify(["blockId", "clause", "quote", "quoteDigest", "selector", "url"])) && publicHttps(value.url) && text(value.selector) && (value.quoteDigest === undefined || text(value.quoteDigest)) && (value.blockId === undefined || text(value.blockId) && text(value.quote) && text(value.clause)); }
+function validAnchor(value) { return isRecord(value) && (JSON.stringify(Object.keys(value).filter(key=>key!=="inlineLinks").sort()) === JSON.stringify(["selector", "url"]) || JSON.stringify(Object.keys(value).filter(key=>key!=="inlineLinks").sort()) === JSON.stringify(["selector", "url", "visibleEvidence"]) && text(value.visibleEvidence) && value.visibleEvidence.length <= 500 || JSON.stringify(Object.keys(value).filter(key=>key!=="inlineLinks").sort()) === JSON.stringify(["quoteDigest", "selector", "url"]) || JSON.stringify(Object.keys(value).filter(key=>key!=="inlineLinks").sort()) === JSON.stringify(["blockId", "clause", "quote", "quoteDigest", "selector", "url"])) && (value.inlineLinks===undefined || typeof value.quote==="string" && isInlineLinks(value.inlineLinks,value.quote)) && publicHttps(value.url) && text(value.selector) && (value.quoteDigest === undefined || text(value.quoteDigest)) && (value.blockId === undefined || text(value.blockId) && text(value.quote) && text(value.clause)); }
 /** @param {unknown} value @returns {value is SimilarityEvidence} */
 function validSimilarity(value) { return isRecord(value) && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(["comparedLocalHash", "decision", "score"]) && text(value.comparedLocalHash) && typeof value.score === "number" && value.score >= 0 && value.score <= 1 && (value.decision === "distinct" || value.decision === "merge" || value.decision === "ambiguous"); }
 /** @param {unknown} value @returns {value is VisualMediaReference} */
@@ -588,7 +590,7 @@ export function createExtractionRunner(dependencies) {
             }
             if (reviewed.value === null){droppedReviews++;continue;}
             point = reviewed.value;
-            if (!validCandidate({summary:point.summary,normalizedHash:point.normalizedHash,evidenceAnchors:point.evidenceAnchors,coverageGoalIds:point.coverageGoalIds,mediaCandidates:point.mediaCandidates}) || point.sourceId !== command.sourceId || point.sourceRevision !== command.sourceRevision || point.evidenceAnchors.some(anchor=>!candidate.evidenceAnchors.some(original=>original.url===anchor.url&&original.selector===anchor.selector&&original.blockId===anchor.blockId&&original.quoteDigest===anchor.quoteDigest&&original.quote===anchor.quote)) || point.coverageGoalIds.some(id=>!candidate.coverageGoalIds.includes(id)) || point.attribution.sourceUrl !== (observation.responseUrl??observation.url)) return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewOutputInvalid"},dependencies,command.runId);
+            if (!validCandidate({summary:point.summary,normalizedHash:point.normalizedHash,evidenceAnchors:point.evidenceAnchors,coverageGoalIds:point.coverageGoalIds,mediaCandidates:point.mediaCandidates}) || point.sourceId !== command.sourceId || point.sourceRevision !== command.sourceRevision || point.evidenceAnchors.some(anchor=>!candidate.evidenceAnchors.some(original=>original.url===anchor.url&&original.selector===anchor.selector&&original.blockId===anchor.blockId&&original.quoteDigest===anchor.quoteDigest&&original.quote===anchor.quote&&JSON.stringify(original.inlineLinks)===JSON.stringify(anchor.inlineLinks))) || point.coverageGoalIds.some(id=>!candidate.coverageGoalIds.includes(id)) || point.attribution.sourceUrl !== (observation.responseUrl??observation.url)) return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewOutputInvalid"},dependencies,command.runId);
           }
           if(scratchpad.acceptedHashes.includes(point.normalizedHash))continue;
           if(dependencies.policy.maximumKnowledgePointsPerExecution!==undefined&&committedThisExecution>=dependencies.policy.maximumKnowledgePointsPerExecution)return {ok:true,value:freeze({state:'awaiting-time-limit-decision',scratchpad,knowledgePointCount:scratchpad.acceptedHashes.length,pagesProcessed,stopReason:'paused'})};

@@ -390,3 +390,18 @@ Deno.test("a new day replaces unfinished Feed and Review batches without erasing
   }
   assertEquals(database.queries.some(query => query.startsWith("DELETE")), false);
 });
+
+Deno.test("stored webpage links survive Feed projection and gateway parsing", async () => {
+  const entries = rows();
+  const inlineLinks = [{text:"music fact",url:"https://example.test/definition#fact"}];
+  const saved = JSON.parse(entries[0].point_json);
+  saved.evidenceAnchors[0] = {...saved.evidenceAnchors[0],quote:saved.summary,inlineLinks};
+  entries[0].point_json = JSON.stringify(saved);
+  const service = createLearningBatchService({database:/** @type {import("../worker/learning-batches-d1.js").D1DatabasePort} */ (/** @type {unknown} */ (new Database(entries))),now:()=>"2026-08-19T00:00:00.000Z",random:()=>0.1,logger:()=>{}});
+  const projected = await service.loadFeed("owner-a","2026-08-19");
+  assertEquals(projected.ok,true); if(!projected.ok)return;
+  const gateway = new LearningBatchGatewayClient({fetch:async()=>Response.json({result:projected.value}),baseUrl:"https://app.example.test/",timeoutMs:1000});
+  const result = await gateway.loadFeed("2026-08-19");
+  assertEquals(result.ok,true); if(!result.ok)return;
+  assertEquals(JSON.stringify(result.value.items.find(item=>item.knowledgeId==="knowledge-0")?.inlineLinks),JSON.stringify(inlineLinks));
+});

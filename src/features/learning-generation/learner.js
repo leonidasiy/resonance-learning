@@ -2,6 +2,8 @@
 import { createShellMarkup } from "../../shell-markup.js";
 import { pendingSpark, playSpark, sparkIcon } from "../experience/spark.js";
 
+import { inlineLinkSpans } from "../knowledge-workflows/inline-links.js";
+
 import { sourceHref } from "../source-library/source-link.js";
 
 import { SUBJECTS } from "../knowledge-subjects/public.js";
@@ -408,7 +410,17 @@ export function createLearnerController(dependencies) {
     const hasImage = media !== "";
     const key = `remove:${card.knowledgeId}`;
     const removal = feedMarkup(43, escapeHtml(key), pending.has(key) ? "open" : "", escapeHtml(key), [["image", "Image only"], ["knowledge", "Knowledge point"]].map(([target, label]) => feedMarkup(48, target, escapeHtml(card.knowledgeId), pending.has(key) || target === "image" && !hasImage ? "disabled" : "", pending.has(key) ? "Removing…" : label)).join(""));
-    return feedMarkup(40, subject, escapeHtml(card.knowledgeId), escapeHtml(card.knowledgeId), escapeHtml(card.knowledgeId), escapeHtml(card.knowledgeId), escapeHtml(card.summary), media, escapeHtml(sourceHref(card.sourceUrl)), escapeHtml(card.title), mark, escapeHtml(presentation?.label ?? "Unclassified"), classification ? `<p>${escapeHtml(classification.topic)}</p>` : "", classificationEditor(card), escapeHtml(sourceHref(card.sourceUrl)), escapeHtml(card.evidenceAnchorIds.join(", ")), preferences.get(card.knowledgeId) === "more" ? "spark-saved" : "", escapeHtml(card.knowledgeId), actionState(`preference:${card.knowledgeId}:more`), actionLabel(`preference:${card.knowledgeId}:more`, `${sparkIcon()}${preferences.get(card.knowledgeId) === "more" ? "Preference saved" : "More like this"}`, "Saving…"), escapeHtml(card.knowledgeId), actionState(`preference:${card.knowledgeId}:less`), actionLabel(`preference:${card.knowledgeId}:less`, preferences.get(card.knowledgeId) === "less" ? "Preference saved" : "Less like this", "Saving…"), removal);
+    return feedMarkup(40, subject, escapeHtml(card.knowledgeId), escapeHtml(card.knowledgeId), escapeHtml(card.knowledgeId), escapeHtml(card.knowledgeId), renderKnowledgeText(card), media, escapeHtml(sourceHref(card.sourceUrl)), escapeHtml(card.title), mark, escapeHtml(presentation?.label ?? "Unclassified"), classification ? `<p>${escapeHtml(classification.topic)}</p>` : "", classificationEditor(card), escapeHtml(sourceHref(card.sourceUrl)), escapeHtml(card.evidenceAnchorIds.join(", ")), preferences.get(card.knowledgeId) === "more" ? "spark-saved" : "", escapeHtml(card.knowledgeId), actionState(`preference:${card.knowledgeId}:more`), actionLabel(`preference:${card.knowledgeId}:more`, `${sparkIcon()}${preferences.get(card.knowledgeId) === "more" ? "Preference saved" : "More like this"}`, "Saving…"), escapeHtml(card.knowledgeId), actionState(`preference:${card.knowledgeId}:less`), actionLabel(`preference:${card.knowledgeId}:less`, preferences.get(card.knowledgeId) === "less" ? "Preference saved" : "Less like this", "Saving…"), removal);
+  }
+
+  /** @param {LearningKnowledgeCard} card */
+  function renderKnowledgeText(card) {
+    let cursor = 0, html = "";
+    for (const span of inlineLinkSpans(card.summary, card.inlineLinks ?? [])) {
+      html += escapeHtml(card.summary.slice(cursor, span.start)) + `<a href="${escapeHtml(span.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(card.summary.slice(span.start, span.end))}</a>`;
+      cursor = span.end;
+    }
+    return html + escapeHtml(card.summary.slice(cursor));
   }
 
   /** @param {LearningKnowledgeCard["media"]} media */

@@ -246,3 +246,8 @@ Deno.test("Replacement validates the slot, answer-hidden question and batch iden
     assertEquals((await gateway.replaceReview("review:a", "old", 1, "replace:old")).ok, expected);
   }
 });
+
+Deno.test("learner gateway rejects executable inline link destinations", async () => {
+  const gateway = new LearningBatchGatewayClient({fetch:async()=>response({result:{...feed,items:feed.items.map(item=>({...item,inlineLinks:[{text:"Point",url:"javascript:alert(1)"}]}))}}),baseUrl:"https://app.example.test/",timeoutMs:1000});
+  assertEquals((await gateway.loadFeed("2026-08-19")).ok,false);
+});

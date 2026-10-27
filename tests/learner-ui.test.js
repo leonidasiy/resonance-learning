@@ -587,3 +587,12 @@ Deno.test("Review displays the knowledge point image with the same zoom controls
   assert(html.includes(media.url) && html.includes(media.attribution), "The bound image and attribution render with the quiz");
   assert(html.includes('data-remove-target="image"'), "Review can remove the image while keeping the quizzes");
 });
+
+Deno.test("Feed makes reused source text clickable and escapes both link labels and destinations", async () => {
+  const card={knowledgeId:"k",sourceId:"s",sourceRevision:1,sourceClassification:null,sourceClassificationRevision:0,questionId:"q",title:"Source",summary:'A <chord> combines notes.',inlineLinks:[{text:'<chord>',url:'https://example.test/?a=1&b=2'}],sourceUrl:"https://example.test/",evidenceAnchorIds:["p"],media:null,questionLocked:true};
+  const escapeHtml=(/** @type {string} */ value)=>value.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
+  const controller=createLearnerController({fetch:async()=>response({result:{batch:{...review.batch,batchId:"feed:links",itemIds:["k"]},items:[card]}}),baseUrl:"https://app.example.test/",timeoutMs:1000,escapeHtml,now:()=>"2026-09-08T00:00:00.000Z",createId:()=>"test",onChange:()=>{}});
+  await controller.loadFeed();
+  const html=controller.renderFeed();
+  assert(html.includes('A <a href="https://example.test/?a=1&amp;b=2" target="_blank" rel="noopener noreferrer">&lt;chord&gt;</a> combines notes.'),"Reused text must retain its captured link safely.");
+});

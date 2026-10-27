@@ -1,5 +1,7 @@
 // @ts-check
 
+import { isInlineLinks } from "../src/features/knowledge-workflows/inline-links.js";
+
 import { isMediaBindingPurpose } from "../src/features/knowledge-workflows/media.js";
 
 import { isSubjectId } from "../src/features/knowledge-subjects/public.js";
@@ -13,7 +15,7 @@ import { selectKnowledgeBatch } from "../src/features/learning-generation/batche
 /** @typedef {{ readonly prepare: (query: string) => D1Statement, readonly batch: (statements: readonly D1Statement[]) => Promise<readonly D1Result[]> }} D1DatabasePort */
 /** @typedef {{ readonly delete: (key: string) => Promise<unknown> }} MediaBucket */
 /** @typedef {{ readonly event: string, readonly ownerId?: string, readonly batchId?: string, readonly knowledgeId?: string, readonly failureKind?: string, readonly itemCount?: number }} LearnerBatchLog */
-/** @typedef {{ readonly knowledgeId: string, readonly sourceId: string, readonly sourceRevision: number, readonly questionId: string, readonly pairedQuestionId?: string, readonly viewCount: number, readonly lastAnswerCorrect: boolean | null, readonly scheduledDays: number, readonly preference: number, readonly dueAt: string | null, readonly studiedAt: string | null, readonly title: string, readonly summary: string, readonly sourceUrl: string, readonly evidenceAnchorIds: readonly string[], readonly sourceClassification: { readonly mainSubject: string, readonly topic: string } | null, readonly sourceClassificationRevision: number, readonly question: PublicQuestion, readonly media: PublicMedia | null }} LearnerCandidate */
+/** @typedef {{ readonly knowledgeId: string, readonly sourceId: string, readonly sourceRevision: number, readonly questionId: string, readonly pairedQuestionId?: string, readonly viewCount: number, readonly lastAnswerCorrect: boolean | null, readonly scheduledDays: number, readonly preference: number, readonly dueAt: string | null, readonly studiedAt: string | null, readonly title: string, readonly summary: string, readonly inlineLinks?: readonly import("../src/features/knowledge-workflows/inline-links.js").InlineLink[], readonly sourceUrl: string, readonly evidenceAnchorIds: readonly string[], readonly sourceClassification: { readonly mainSubject: string, readonly topic: string } | null, readonly sourceClassificationRevision: number, readonly question: PublicQuestion, readonly media: PublicMedia | null }} LearnerCandidate */
 /** @typedef {{ readonly id:string, readonly kind:"single-choice"|"multiple-choice"|"fill-blank", readonly prompt:string, readonly explanation:string, readonly choices:readonly {readonly id:string,readonly label:string}[]|null, readonly correctChoiceIds:readonly string[]|null, readonly blanks:readonly {readonly id:string,readonly acceptedAnswers:readonly string[]}[]|null }} PairedVariant */
 /** @typedef {{ readonly id: string, readonly kind: string, readonly prompt: string, readonly explanation: string, readonly sourceAnchorIds: readonly string[], readonly choices: readonly { readonly id: string, readonly label: string }[] | null, readonly correctChoiceIds: readonly string[] | null, readonly acceptedAnswers: readonly string[] | null, readonly blankId: string | null, readonly blanks: readonly { readonly id: string, readonly acceptedAnswers: readonly string[] }[] | null, readonly pairedVariants: readonly PairedVariant[] | null, readonly revision: number }} PublicQuestion */
 /** @typedef {{ readonly assetId: string, readonly kind: string, readonly url: string, readonly attribution: string, readonly purpose?: "illustration" | "evidence" }} PublicMedia */
@@ -78,6 +80,7 @@ function parseCandidate(value) {
   let task;
   try { point = JSON.parse(value.point_json); task = JSON.parse(value.task_json); } catch (error) { return null; }
   if (!record(point) || !text(point.summary) || !record(point.attribution) || !text(point.attribution.sourceUrl) || !Array.isArray(point.evidenceAnchors)) return null;
+  const inlineLinks = point.evidenceAnchors.flatMap(anchor => record(anchor) && typeof anchor.quote === "string" && isInlineLinks(anchor.inlineLinks, anchor.quote) ? anchor.inlineLinks : []);
   const sourceClassificationRevision = value.source_classification_revision === null ? 0 : value.source_classification_revision;
   if (!nonNegativeInteger(sourceClassificationRevision)) return null;
   const sourceClassification = value.source_main_subject === null && value.source_topic === null
@@ -97,12 +100,12 @@ function parseCandidate(value) {
   const storedMedia = text(value.asset_id) && text(value.media_kind) && text(value.media_attribution)
     ? Object.freeze({ assetId: value.asset_id, kind: value.media_kind, url: `/api/learning-media?assetId=${encodeURIComponent(value.asset_id)}&variant=feed`, attribution: value.media_attribution, ...(value.media_purpose === "illustration" || value.media_purpose === "evidence" ? { purpose: value.media_purpose } : {}) })
     : null;
-  return Object.freeze({ knowledgeId: value.knowledge_id, sourceId: value.source_id, sourceRevision: value.source_revision, questionId: question.id, viewCount: value.view_count, lastAnswerCorrect: value.last_answer_correct === null ? null : value.last_answer_correct === 1, scheduledDays: value.scheduled_days, dueAt: value.due_at, studiedAt: value.studied_at, preference: value.preference, title: value.source_title, summary: point.summary, sourceUrl: point.attribution.sourceUrl, evidenceAnchorIds: Object.freeze(evidenceAnchorIds), sourceClassification, sourceClassificationRevision, question, media: storedMedia });
+  return Object.freeze({ knowledgeId: value.knowledge_id, sourceId: value.source_id, sourceRevision: value.source_revision, questionId: question.id, viewCount: value.view_count, lastAnswerCorrect: value.last_answer_correct === null ? null : value.last_answer_correct === 1, scheduledDays: value.scheduled_days, dueAt: value.due_at, studiedAt: value.studied_at, preference: value.preference, title: value.source_title, summary: point.summary, ...(inlineLinks.length ? {inlineLinks: Object.freeze(inlineLinks)} : {}), sourceUrl: point.attribution.sourceUrl, evidenceAnchorIds: Object.freeze(evidenceAnchorIds), sourceClassification, sourceClassificationRevision, question, media: storedMedia });
 }
 
 /** @param {LearnerCandidate} candidate @returns {Record<string, unknown>} */
 function publicCandidate(candidate) {
-  return { knowledgeId: candidate.knowledgeId, sourceId: candidate.sourceId, sourceRevision: candidate.sourceRevision, questionId: candidate.questionId, title: candidate.title, summary: candidate.summary, sourceUrl: candidate.sourceUrl, evidenceAnchorIds: candidate.evidenceAnchorIds, media: candidate.media, questionLocked: candidate.studiedAt === null || candidate.dueAt !== null && Date.parse(candidate.studiedAt) < Date.parse(candidate.dueAt), sourceClassification: candidate.sourceClassification, sourceClassificationRevision: candidate.sourceClassificationRevision };
+  return { knowledgeId: candidate.knowledgeId, sourceId: candidate.sourceId, sourceRevision: candidate.sourceRevision, questionId: candidate.questionId, title: candidate.title, summary: candidate.summary, ...(candidate.inlineLinks ? {inlineLinks:candidate.inlineLinks} : {}), sourceUrl: candidate.sourceUrl, evidenceAnchorIds: candidate.evidenceAnchorIds, media: candidate.media, questionLocked: candidate.studiedAt === null || candidate.dueAt !== null && Date.parse(candidate.studiedAt) < Date.parse(candidate.dueAt), sourceClassification: candidate.sourceClassification, sourceClassificationRevision: candidate.sourceClassificationRevision };
 }
 /** @param {LearnerCandidate} candidate @param {string} batchId @returns {Promise<Record<string, unknown>>} */
 async function publicQuestion(candidate, batchId) {

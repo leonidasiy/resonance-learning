@@ -63,7 +63,7 @@ export type WireObservation = Omit<Observation, "bytes"> & {
 export type WebpageEvidence = {
   readonly url: string;
   readonly headings: readonly {readonly id:string; readonly sectionId:string; readonly locator:string; readonly text:string; readonly level:number}[];
-  readonly blocks: readonly {readonly id:string; readonly sectionId:string; readonly locator:string; readonly kind:'text'|'caption'; readonly text:string; readonly figureId:string|null}[];
+  readonly blocks: readonly {readonly id:string; readonly sectionId:string; readonly locator:string; readonly kind:'text'|'caption'; readonly text:string; readonly inlineLinks?:readonly import('../src/features/knowledge-workflows/inline-links.js').InlineLink[]; readonly figureId:string|null}[];
   readonly images: readonly {readonly id:string; readonly url:string; readonly occurrences: readonly {readonly id:string; readonly locator:string; readonly sectionId:string; readonly figureId:string|null; readonly captionId:string|null; readonly alt:string}[]; readonly occurrenceWindows:readonly (readonly string[])[]}[];
   readonly warnings:readonly string[];
 };
