@@ -1365,10 +1365,11 @@ Deno.test("Library dismisses completed failures without removing the source or k
 Deno.test("Library cards expose escaped subject and topic before published knowledge exists", () => {
   const model = baseModel();
   const html = renderLibraryRoute({...model,collection:{...model.collection,items:[{...source,primarySubject:"music",sourceTopic:"Meter <script>"}]},knowledge:[]});
-  assert(html.includes("Main subject:</strong> Music &amp; Performing Arts"), "Cards show the source's main subject.");
-  assert(html.includes("Topic:</strong> Meter &lt;script>"), "Source metadata supplies an escaped topic while knowledge is processing.");
+  assert(html.includes('data-subject="music"') && html.includes('class="card-subject"') && html.includes('class="subject-mark"') && html.includes('Music &amp; Performing Arts'), "Cards reuse the Feed's subject identity and decorative icon.");
+  assert(html.includes("<p>Meter &lt;script></p>"), "Source metadata supplies an escaped topic while knowledge is processing.");
   const unclassified = renderLibraryRoute({...model,knowledge:[]});
-  assert(unclassified.includes("Main subject:</strong> Unclassified") && unclassified.includes("Topic:</strong> Not classified yet"), "Missing classification is explicit without guessing a topic.");
+  assert(unclassified.includes('class="card-subject">Unclassified</p>') && unclassified.includes("<p>Not classified yet</p>") && !unclassified.includes('class="subject-mark"'), "Missing classification is explicit without guessing a topic.");
+  assert(!html.includes("Main subject:") && !html.includes("Topic:"), "Subject and topic follow Feed's label-free reading layout.");
   const chip = renderProcessingStatus({workflowStatuses:[workflowStatus("extraction-loop")],escapeHtml:model.escapeHtml});
   assert(chip.includes('<button type="button"') && chip.includes("data-library-processing-open"), "Processing navigation is keyboard operable.");
 });

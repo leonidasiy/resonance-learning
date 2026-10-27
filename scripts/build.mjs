@@ -16,16 +16,16 @@ export const ARTIFACT_BUDGETS = Object.freeze({
   }),
   aggregateJavascript: Object.freeze({
     label: "Aggregate JavaScript",
-    // Measured processing navigation, source classification, and saved options (2026-10-27).
+    // Measured shared Feed and Library subject badges (2026-10-27).
     // Initial and lazy-chunk limits remain unchanged.
-    rawBytes: 240_527,
-    gzipBytes: 79_599,
+    rawBytes: 240_733,
+    gzipBytes: 79_736,
   }),
   stylesheet: Object.freeze({
     label: "CSS",
-    // Measured animated processing and shared source-card disclosures (2026-10-27).
+    // Measured shared Feed and Library subject badges (2026-10-27).
     rawBytes: 48_723,
-    gzipBytes: 10_494,
+    gzipBytes: 10_519,
   }),
   pdfRenderer: Object.freeze({
     label: "On-demand PDF renderer",

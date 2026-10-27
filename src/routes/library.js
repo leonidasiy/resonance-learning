@@ -4,6 +4,7 @@ import { createShellMarkup } from "../shell-markup.js";
 import { countProcessingWorkflowStatuses } from "../features/source-library/gateway.js";
 import { sourceHref } from "../features/source-library/source-link.js";
 import { isRecord } from "../features/source-library/contracts.js";
+import { subjectPresentation } from "../features/knowledge-subjects/presentation.js";
 import { SUBJECTS, isSubjectId } from "../features/knowledge-subjects/public.js";
 
 /** @import { LibrarySource, SourceInterestArea, SourceSearchScope } from "../features/source-library/contracts.js" */
@@ -149,9 +150,12 @@ function renderSource(model, source) {
     ? shellMarkup(19, sourceId, knowledge.length, knowledge.length ? shellMarkup(52, knowledge.map(point => shellMarkup(51, escapeHtml(point.summary))).join("")) : shellMarkup(53))
     : "";
   const subjects = librarySourceSubjects(source, knowledge);
-  const subjectLabel = subjects.map(id => SUBJECTS.find(subject => subject.id === id)?.label ?? "Unclassified").join(", ");
+  const badges = subjects.map(id => {
+    const presentation = subjectPresentation(id);
+    return shellMarkup(93, presentation === null ? "" : ` data-subject="${escapeHtml(id)}"`, presentation === null ? "" : feedMarkup(44, presentation.path), escapeHtml(presentation?.label ?? "Unclassified"));
+  }).join("");
   const topic = source.sourceTopic ?? knowledge.find(point => point.sourceTopic)?.sourceTopic ?? "Not classified yet";
-  const classification = shellMarkup(92, escapeHtml(subjectLabel), escapeHtml(topic));
+  const classification = shellMarkup(92, badges, escapeHtml(topic));
   return shellMarkup(20, sourceId, sourceId, sourceId, escapeHtml(source.title), escapeHtml(source.origin==="private-document"?"Uploaded material":new URL(source.canonicalUrl).hostname), formatDate(source.approvedAt), escapeHtml(source.description), classification + extracted + workflowNotice + upload, workflowRetry + dismiss + workflowCancel, escapeHtml(sourceHref(source.canonicalUrl)), sourceId, source.revision, pending ? "disabled" : "", pending ? "Please wait..." : "Remove source");
 }
 
@@ -238,3 +242,5 @@ function isKnowledgeSearchResult(value) {
 export {};
 
 const shellMarkup = createShellMarkup("library-markup");
+
+const feedMarkup = createShellMarkup("feed-markup");

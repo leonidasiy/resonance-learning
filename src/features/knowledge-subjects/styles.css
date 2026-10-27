@@ -1,11 +1,13 @@
 /* Authored identities for the approved closed v1 taxonomy. Motifs occupy only
    the top binding; the reading surface and controls share the app's grammar. */
-.learning-card[data-subject] {
+[data-subject] {
   --subject-accent: hsl(var(--subject-hue) 55% 30%);
   --subject-paper: color-mix(in srgb, var(--subject-accent) 7%, var(--surface));
   --subject-line: color-mix(in srgb, var(--subject-accent) 48%, var(--border));
   --subject-wash: color-mix(in srgb, var(--subject-accent) 17%, var(--subject-paper));
   --text-muted: color-mix(in srgb, var(--text) 76%, var(--subject-accent));
+}
+.learning-card[data-subject] {
   position: relative;
   border-color: var(--subject-line);
   border-radius: var(--subject-radius);
@@ -13,7 +15,7 @@
   background: var(--subject-paper);
   box-shadow: none;
 }
-:root[data-theme="dark"] .learning-card[data-subject] {
+:root[data-theme="dark"] [data-subject] {
   --subject-accent: hsl(var(--subject-hue) 65% 77%);
   --subject-paper: color-mix(in srgb, var(--subject-accent) 6%, var(--surface));
 }
@@ -33,7 +35,7 @@
 .learning-card[data-subject] :is(input,select) { accent-color: var(--subject-accent); caret-color: var(--subject-accent); }
 .learning-card[data-subject] ::selection { color: var(--text); background: var(--subject-wash); }
 .subject-mark { color: var(--subject-accent); stroke-linecap: round; stroke-linejoin: round; }
-.learning-card[data-subject] .card-subject .subject-mark {
+[data-subject] .card-subject .subject-mark {
   box-sizing: content-box;
   padding: 10px;
   border: 1px solid var(--subject-line);
@@ -42,58 +44,58 @@
 }
 .learning-card[data-subject] .preference-more { color: var(--subject-accent); border-color: var(--subject-accent); background: var(--subject-wash); }
 .learning-card[data-subject] .preference-more:hover { background: color-mix(in srgb, var(--subject-accent) 25%, var(--subject-paper)); }
-.learning-card[data-subject] :is(.card-subject, .preference-more) { color: color-mix(in srgb, var(--subject-accent) 65%, var(--text)); }
+[data-subject] :is(.card-subject, .preference-more) { color: color-mix(in srgb, var(--subject-accent) 65%, var(--text)); }
 
 /* Cartesian notebook: measured intersections and squared corners. */
-.learning-card[data-subject="mathematics"] { --subject-hue: 222; --subject-radius: 4px; --subject-pattern: linear-gradient(90deg, transparent 95%, currentColor 95%), linear-gradient(transparent 94%, currentColor 94%); --subject-repeat: 16px 16px; }
+[data-subject="mathematics"] { --subject-hue: 222; --subject-radius: 4px; --subject-pattern: linear-gradient(90deg, transparent 95%, currentColor 95%), linear-gradient(transparent 94%, currentColor 94%); --subject-repeat: 16px 16px; }
 /* Circuit board: discrete pixels and a compact component enclosure. */
-.learning-card[data-subject="computing"] { --subject-hue: 268; --subject-radius: 4px 18px 4px 4px; --subject-pattern: conic-gradient(from 90deg at 2px 2px, transparent 75%, currentColor 0); --subject-repeat: 12px 8px; }
+[data-subject="computing"] { --subject-hue: 268; --subject-radius: 4px 18px 4px 4px; --subject-pattern: conic-gradient(from 90deg at 2px 2px, transparent 75%, currentColor 0); --subject-repeat: 12px 8px; }
 /* Observatory: orbital ellipses across an expansive rounded horizon. */
-.learning-card[data-subject="physics"] { --subject-hue: 244; --subject-radius: 32px 32px 8px 8px; --subject-pattern: radial-gradient(ellipse at 50% 110%, transparent 53%, currentColor 55% 58%, transparent 60%); --subject-repeat: 56px 20px; }
+[data-subject="physics"] { --subject-hue: 244; --subject-radius: 32px 32px 8px 8px; --subject-pattern: radial-gradient(ellipse at 50% 110%, transparent 53%, currentColor 55% 58%, transparent 60%); --subject-repeat: 56px 20px; }
 /* Molecular lattice: bonds connect evenly spaced reaction sites. */
-.learning-card[data-subject="chemistry"] { --subject-hue: 188; --subject-radius: 4px 24px; --subject-pattern: radial-gradient(circle, currentColor 2px, transparent 2.5px), linear-gradient(transparent 47%, currentColor 48% 52%, transparent 53%); --subject-repeat: 24px 16px; }
+[data-subject="chemistry"] { --subject-hue: 188; --subject-radius: 4px 24px; --subject-pattern: radial-gradient(circle, currentColor 2px, transparent 2.5px), linear-gradient(transparent 47%, currentColor 48% 52%, transparent 53%); --subject-repeat: 24px 16px; }
 /* Botanical specimen: a leaf silhouette and branching veins. */
-.learning-card[data-subject="biology"] { --subject-hue: 112; --subject-radius: 32px 6px 32px 6px; --subject-pattern: linear-gradient(35deg, transparent 46%, currentColor 47% 50%, transparent 51%), linear-gradient(-35deg, transparent 46%, currentColor 47% 50%, transparent 51%); --subject-repeat: 28px 16px; }
+[data-subject="biology"] { --subject-hue: 112; --subject-radius: 32px 6px 32px 6px; --subject-pattern: linear-gradient(35deg, transparent 46%, currentColor 47% 50%, transparent 51%), linear-gradient(-35deg, transparent 46%, currentColor 47% 50%, transparent 51%); --subject-repeat: 28px 16px; }
 /* Geological fieldbook: strata and a softened sediment edge. */
-.learning-card[data-subject="earth"] { --subject-hue: 38; --subject-radius: 8px 8px 28px 8px; --subject-pattern: repeating-linear-gradient(173deg, transparent 0 6px, currentColor 6px 7px, transparent 7px 12px); --subject-repeat: 100% 16px; }
+[data-subject="earth"] { --subject-hue: 38; --subject-radius: 8px 8px 28px 8px; --subject-pattern: repeating-linear-gradient(173deg, transparent 0 6px, currentColor 6px 7px, transparent 7px 12px); --subject-repeat: 100% 16px; }
 /* Survey chart: compass diagonals and folded map corners. */
-.learning-card[data-subject="geography"] { --subject-hue: 174; --subject-radius: 4px 28px 4px 28px; --subject-pattern: linear-gradient(45deg, transparent 48%, currentColor 49% 51%, transparent 52%), linear-gradient(-45deg, transparent 48%, currentColor 49% 51%, transparent 52%); --subject-repeat: 32px 32px; }
+[data-subject="geography"] { --subject-hue: 174; --subject-radius: 4px 28px 4px 28px; --subject-pattern: linear-gradient(45deg, transparent 48%, currentColor 49% 51%, transparent 52%), linear-gradient(-45deg, transparent 48%, currentColor 49% 51%, transparent 52%); --subject-repeat: 32px 32px; }
 /* Technical drawing: a ruler's major and minor divisions. */
-.learning-card[data-subject="engineering"] { --subject-hue: 207; --subject-radius: 2px; --subject-pattern: linear-gradient(90deg, currentColor 1px, transparent 1px), linear-gradient(90deg, currentColor 1px, transparent 1px); --subject-repeat: 8px 6px, 40px 16px; }
+[data-subject="engineering"] { --subject-hue: 207; --subject-radius: 2px; --subject-pattern: linear-gradient(90deg, currentColor 1px, transparent 1px), linear-gradient(90deg, currentColor 1px, transparent 1px); --subject-repeat: 8px 6px, 40px 16px; }
 /* Care chart: a steady pulse with a gentle, symmetrical enclosure. */
-.learning-card[data-subject="health"] { --subject-hue: 348; --subject-radius: 24px; --subject-pattern: linear-gradient(transparent 7px, currentColor 7px 9px, transparent 9px), linear-gradient(90deg, transparent 18px, var(--subject-paper) 18px 24px); --subject-repeat: 40px 16px; }
+[data-subject="health"] { --subject-hue: 348; --subject-radius: 24px; --subject-pattern: linear-gradient(transparent 7px, currentColor 7px 9px, transparent 9px), linear-gradient(90deg, transparent 18px, var(--subject-paper) 18px 24px); --subject-repeat: 40px 16px; }
 /* Neural atlas: connections at different scales, open curved corners. */
-.learning-card[data-subject="psychology"] { --subject-hue: 282; --subject-radius: 28px 8px 8px 28px; --subject-pattern: radial-gradient(circle at 5px 8px, currentColor 2px, transparent 2.5px), radial-gradient(circle at 19px 4px, currentColor 1px, transparent 1.5px), linear-gradient(165deg, transparent 48%, currentColor 49% 51%, transparent 52%); --subject-repeat: 28px 16px; }
+[data-subject="psychology"] { --subject-hue: 282; --subject-radius: 28px 8px 8px 28px; --subject-pattern: radial-gradient(circle at 5px 8px, currentColor 2px, transparent 2.5px), radial-gradient(circle at 19px 4px, currentColor 1px, transparent 1.5px), linear-gradient(165deg, transparent 48%, currentColor 49% 51%, transparent 52%); --subject-repeat: 28px 16px; }
 /* Athletics: lane markings and forward-leaning rhythm. */
-.learning-card[data-subject="sports"] { --subject-hue: 20; --subject-radius: 24px 4px 24px 4px; --subject-pattern: repeating-linear-gradient(125deg, currentColor 0 4px, transparent 4px 16px); --subject-repeat: 40px 16px; }
+[data-subject="sports"] { --subject-hue: 20; --subject-radius: 24px 4px 24px 4px; --subject-pattern: repeating-linear-gradient(125deg, currentColor 0 4px, transparent 4px 16px); --subject-repeat: 40px 16px; }
 /* Archive folio: restrained sepia, paired rules, a fine inner frame. */
-.learning-card[data-subject="history"] { --subject-hue: 28; --subject-radius: 6px; --subject-pattern: linear-gradient(transparent 4px, currentColor 4px 5px, transparent 5px 10px, currentColor 10px 11px, transparent 11px); --subject-repeat: 100% 16px; }
+[data-subject="history"] { --subject-hue: 28; --subject-radius: 6px; --subject-pattern: linear-gradient(transparent 4px, currentColor 4px 5px, transparent 5px 10px, currentColor 10px 11px, transparent 11px); --subject-repeat: 100% 16px; }
 .learning-card[data-subject="history"]::after, .learning-card[data-subject="politics"]::after { content: ""; position: absolute; inset: 5px; border: 1px solid var(--subject-line); border-radius: inherit; pointer-events: none; opacity: .5; }
 /* Constitutional seal: balanced columns and a formal double frame. */
-.learning-card[data-subject="politics"] { --subject-hue: 330; --subject-radius: 12px; --subject-pattern: linear-gradient(90deg, transparent 5px, currentColor 5px 6px, transparent 6px 9px, currentColor 9px 10px, transparent 10px); --subject-repeat: 24px 16px; }
+[data-subject="politics"] { --subject-hue: 330; --subject-radius: 12px; --subject-pattern: linear-gradient(90deg, transparent 5px, currentColor 5px 6px, transparent 6px 9px, currentColor 9px 10px, transparent 10px); --subject-repeat: 24px 16px; }
 /* Community tapestry: overlapping circles, an inclusive soft outline. */
-.learning-card[data-subject="society"] { --subject-hue: 12; --subject-radius: 28px 28px 12px 12px; --subject-pattern: radial-gradient(circle at 0 50%, transparent 6px, currentColor 6px 7px, transparent 7px), radial-gradient(circle at 100% 50%, transparent 6px, currentColor 6px 7px, transparent 7px); --subject-repeat: 20px 16px; }
+[data-subject="society"] { --subject-hue: 12; --subject-radius: 28px 28px 12px 12px; --subject-pattern: radial-gradient(circle at 0 50%, transparent 6px, currentColor 6px 7px, transparent 7px), radial-gradient(circle at 100% 50%, transparent 6px, currentColor 6px 7px, transparent 7px); --subject-repeat: 20px 16px; }
 /* Financial ledger: ascending columns, crisp tabular proportions. */
-.learning-card[data-subject="economics"] { --subject-hue: 150; --subject-radius: 16px 4px 4px 16px; --subject-pattern: linear-gradient(90deg, currentColor 0 3px, transparent 3px 8px, currentColor 8px 11px, transparent 11px 16px, currentColor 16px 19px, transparent 19px); --subject-repeat: 32px 16px; }
+[data-subject="economics"] { --subject-hue: 150; --subject-radius: 16px 4px 4px 16px; --subject-pattern: linear-gradient(90deg, currentColor 0 3px, transparent 3px 8px, currentColor 8px 11px, transparent 11px 16px, currentColor 16px 19px, transparent 19px); --subject-repeat: 32px 16px; }
 /* Strategy board: ordered blocks and dependable rectilinear framing. */
-.learning-card[data-subject="business"] { --subject-hue: 215; --subject-radius: 8px 8px 2px 2px; --subject-pattern: linear-gradient(90deg, currentColor 0 18px, transparent 18px 24px); --subject-repeat: 48px 4px; }
+[data-subject="business"] { --subject-hue: 215; --subject-radius: 8px 8px 2px 2px; --subject-pattern: linear-gradient(90deg, currentColor 0 18px, transparent 18px 24px); --subject-repeat: 48px 4px; }
 /* Conversation: alternating voices and a dialogue-shaped enclosure. */
-.learning-card[data-subject="languages"] { --subject-hue: 166; --subject-radius: 26px 26px 4px 26px; --subject-pattern: radial-gradient(ellipse at 25% 100%, currentColor 20%, transparent 22%), radial-gradient(ellipse at 75% 0, currentColor 20%, transparent 22%); --subject-repeat: 40px 16px; }
+[data-subject="languages"] { --subject-hue: 166; --subject-radius: 26px 26px 4px 26px; --subject-pattern: radial-gradient(ellipse at 25% 100%, currentColor 20%, transparent 22%), radial-gradient(ellipse at 75% 0, currentColor 20%, transparent 22%); --subject-repeat: 40px 16px; }
 /* Bound manuscript: close-spaced typesetting rules and a book's spine. */
-.learning-card[data-subject="literature"] { --subject-hue: 305; --subject-radius: 2px 18px 18px 2px; --subject-pattern: repeating-linear-gradient(transparent 0 4px, currentColor 4px 5px); --subject-repeat: 100% 16px; }
+[data-subject="literature"] { --subject-hue: 305; --subject-radius: 2px 18px 18px 2px; --subject-pattern: repeating-linear-gradient(transparent 0 4px, currentColor 4px 5px); --subject-repeat: 100% 16px; }
 /* Philosophical inquiry: open circles suggest questions held in tension. */
-.learning-card[data-subject="philosophy"] { --subject-hue: 48; --subject-radius: 20px 4px 20px 4px; --subject-pattern: radial-gradient(circle at 50% 0, transparent 9px, currentColor 9px 10px, transparent 10px); --subject-repeat: 32px 16px; }
+[data-subject="philosophy"] { --subject-hue: 48; --subject-radius: 20px 4px 20px 4px; --subject-pattern: radial-gradient(circle at 50% 0, transparent 9px, currentColor 9px 10px, transparent 10px); --subject-repeat: 32px 16px; }
 /* Artist's proof: crop marks and an alternating, expressive silhouette. */
-.learning-card[data-subject="arts"] { --subject-hue: 318; --subject-radius: 24px 2px 24px 2px; --subject-pattern: conic-gradient(from 90deg at 1px 1px, transparent 75%, currentColor 0); --subject-repeat: 32px 12px; }
+[data-subject="arts"] { --subject-hue: 318; --subject-radius: 24px 2px 24px 2px; --subject-pattern: conic-gradient(from 90deg at 1px 1px, transparent 75%, currentColor 0); --subject-repeat: 32px 12px; }
 /* Musical score: five staff lines and a flowing phrase-shaped frame. */
-.learning-card[data-subject="music"] { --subject-hue: 355; --subject-radius: 8px 28px 28px 8px; --subject-pattern: repeating-linear-gradient(transparent 0 3px, currentColor 3px 4px); --subject-repeat: 100% 20px; }
+[data-subject="music"] { --subject-hue: 355; --subject-radius: 8px 28px 28px 8px; --subject-pattern: repeating-linear-gradient(transparent 0 3px, currentColor 3px 4px); --subject-repeat: 100% 20px; }
 /* Workshop notebook: stitched binding and a tactile, utilitarian outline. */
-.learning-card[data-subject="life-skills"] { --subject-hue: 65; --subject-radius: 14px; --subject-border: dashed; --subject-pattern: radial-gradient(ellipse, currentColor 2px, transparent 2.5px); --subject-repeat: 12px 8px; }
+[data-subject="life-skills"] { --subject-hue: 65; --subject-radius: 14px; --subject-border: dashed; --subject-pattern: radial-gradient(ellipse, currentColor 2px, transparent 2.5px); --subject-repeat: 12px 8px; }
 
 .classification-form { display: grid; gap: 8px; }
 .classification-form :is(select,input) { width: 100%; min-height: 44px; color: var(--text); background: var(--surface); }
-@media (max-width: 480px) { .learning-card[data-subject] .card-subject .subject-mark { padding: 6px; } }
+@media (max-width: 480px) { [data-subject] .card-subject .subject-mark { padding: 6px; } }
 @media (forced-colors: active) {
-  .learning-card[data-subject], .learning-card[data-subject] .subject-mark { border-color: CanvasText; }
+  .learning-card[data-subject], [data-subject] .subject-mark { border-color: CanvasText; }
   .learning-card[data-subject]::before, .learning-card[data-subject]::after { display: none; }
 }

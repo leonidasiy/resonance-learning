@@ -296,6 +296,8 @@ pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .data-list article { padding: 24px; border: 1px solid var(--border); border-radius: var(--panel-radius); background: var(--surface); }
 .data-list h3 { font-family: var(--font-display); font-size: 24px; }
 .data-list p { color: var(--text-muted); font-size: 13px; }
+.source-classification .card-subject { font-size: 16px; }
+.source-classification > p { color: var(--text); font-size: inherit; }
 .library-workflow-progress progress { width: 100%; height: 8px; accent-color: var(--action); }
 .library-knowledge { margin: 16px 0; padding: 28px; border: 1px solid var(--border); border-top: 3px solid var(--action); border-radius: var(--panel-radius); background: var(--surface); }
 .library-knowledge h4 { margin: 0; }
