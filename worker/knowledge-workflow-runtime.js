@@ -833,11 +833,15 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
   }
 
   /** @param {import('./knowledge-workflow-stages-d1.js').FailedModelStage} identity */
-  async function authorizeCompletedModelRetry(identity){
-    if(identity.status!=='completed'||identity.result?.ok!==false||!record(identity.result.error)||!identity.completedAt)return null;
-    const billing=identity.result.error.kind==='KnowledgeModelRejected'&&identity.result.error.status===402;
-    if(!billing&&identity.result.error.kind!=='WorkflowAgentAgentOutputInvalid')return null;
-    const control=await dependencies.database.prepare("SELECT control_id FROM knowledge_workflow_controls WHERE owner_id=? AND run_id=? AND json_valid(command_fingerprint) AND substr(idempotency_key,1,12)<>'auto-resume:' AND json_extract(command_fingerprint,'$.action')='resume' AND (json_extract(result_json,'$.state')='extraction-loop' OR (?=1 AND json_extract(result_json,'$.state')='per-point-quiz-loop')) AND occurred_at>? ORDER BY occurred_at DESC LIMIT 1").bind(identity.scope.ownerId,identity.scope.runId,billing?1:0,identity.completedAt).first();
+  async function authorizeOwnerModelRetry(identity){
+    let cutoff=identity.createdAt,billing=false;
+    if(identity.status!=='claimed'){
+      if(identity.result?.ok!==false||!record(identity.result.error)||!identity.completedAt)return null;
+      cutoff=identity.completedAt;
+      billing=identity.result.error.kind==='KnowledgeModelRejected'&&identity.result.error.status===402;
+      if(!billing&&identity.result.error.kind!=='WorkflowAgentAgentOutputInvalid')return null;
+    }
+    const control=await dependencies.database.prepare("SELECT control_id FROM knowledge_workflow_controls WHERE owner_id=? AND run_id=? AND json_valid(command_fingerprint) AND substr(idempotency_key,1,12)<>'auto-resume:' AND json_extract(command_fingerprint,'$.action')='resume' AND (json_extract(result_json,'$.state')='extraction-loop' OR (?=1 AND json_extract(result_json,'$.state')='per-point-quiz-loop')) AND occurred_at>? ORDER BY occurred_at DESC LIMIT 1").bind(identity.scope.ownerId,identity.scope.runId,billing||identity.status==='claimed'?1:0,cutoff).first();
     if(!record(control)||!text(control.control_id))return null;
     const attemptKey=(await imageHash(new TextEncoder().encode(control.control_id))).replace(/^sha256:/,'');
     return {attemptKey};
@@ -894,7 +898,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     try {generated=await agentRuntimeFor(run).run({ownerId:run.ownerId,runId:run.runId,role:agentRole,taskId,systemPrompt,input,maxOutputTokens,...(attachments===undefined?{}:{attachments}),...modelOptions,timeoutMs:remaining,signal:AbortSignal.timeout(remaining)});}
     catch(error){if(error instanceof AgentExecutionBoundaryFailure)error.notStarted=false;throw error;}
     if(!generated.ok)return generated;const saved=await budget.complete(key,generated.value);return saved.ok?generated:saved;
-    },{modelCall:true,maximumProviderAttempts:4,cacheProviderRefusals:true,recoverFailedModel:dependencies.authorizeFailedReviewCall??authorizeCompletedModelRetry,...(dependencies.authorizeClaimedModelCall===undefined?{}:{recoverClaimed:({scope,key,inputDigest,createdAt})=>dependencies.authorizeClaimedModelCall?.({ownerId:scope.ownerId,runId:scope.runId,stageKey:key,inputDigest,createdAt})??Promise.resolve(false)})});
+    },{modelCall:true,maximumProviderAttempts:4,cacheProviderRefusals:true,recoverFailedModel:dependencies.authorizeFailedReviewCall??authorizeOwnerModelRetry,...(dependencies.authorizeClaimedModelCall===undefined?{}:{recoverClaimed:({scope,key,inputDigest,createdAt})=>dependencies.authorizeClaimedModelCall?.({ownerId:scope.ownerId,runId:scope.runId,stageKey:key,inputDigest,createdAt})??Promise.resolve(false)})});
     });
   }
 
@@ -930,7 +934,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
             dependencies.preflightModelWork?.("rights-assessor",{ownerId:run.ownerId,runId:run.runId,stageKey:identity.key,inputDigest:identity.inputDigest,createdAt:identity.createdAt});
             const decisionModel = createSourceDecisionModel({apiStyle:dependencies.apiStyle,configuration:config,apiKey:dependencies.apiKey,endpoint:dependencies.endpoint,protocol,maximumInputCharacters:3_000_000,fetch:dependencies.fetch,now:dependencies.nowMs,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:"source-classifier"})});
             return withModelSlot(async()=>{const active=await checkProcessingState(run);return active.ok?decisionModel.generate({...attemptedCommand,role:"source-assessor"}):active;});
-          },{modelCall:true,maximumProviderAttempts:4,cacheProviderRefusals:true,recoverFailedModel:authorizeCompletedModelRetry}); }catch(error){if(!(error instanceof AgentExecutionBoundaryFailure))throw error;technicalFailure={kind:error.failure.kind};return {ok:false,error:technicalFailure};}
+          },{modelCall:true,maximumProviderAttempts:4,cacheProviderRefusals:true,recoverFailedModel:authorizeOwnerModelRetry}); }catch(error){if(!(error instanceof AgentExecutionBoundaryFailure))throw error;technicalFailure={kind:error.failure.kind};return {ok:false,error:technicalFailure};}
           const parsed=generated.ok?parseSourceClassification(generated.value.output):null;
           if(generated.ok&&parsed?.ok)return generated;
           const failure=generated.ok?{kind:"SourceClassificationOutputInvalid"}:generated.error.kind==="KnowledgeModelRejected"&&"status" in generated.error&&generated.error.status===402?{kind:"KnowledgeModelPaymentRequired"}:generated.error;
