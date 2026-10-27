@@ -165,7 +165,7 @@ for(const defect of ['coverage','compact-units'])test(`invalid ${defect} review 
   if(cache.has(command.taskId))return structuredClone(cache.get(command.taskId));
   calls.push(command);
   const response=await model(command);
-  if(command.phase==='normalization'&&!command.input.validationFailure){
+  if(command.phase==='normalization'&&!Array.isArray(command.input.validationFailure?.issues)){
    if(defect==='coverage')response.value.blockCoverage.pop();
    else response.value.reviews[0].relationshipUnits.push({...response.value.reviews[0].relationshipUnits[0]});
   }
@@ -175,7 +175,8 @@ for(const defect of ['coverage','compact-units'])test(`invalid ${defect} review 
  assert.equal(calls.filter(c=>c.phase==='extraction').length,1);
  const reviews=calls.filter(c=>c.phase==='normalization');assert.equal(reviews.length,2);
  assert.equal(reviews[1].input.validationFailure.kind,defect==='coverage'?'WebpageCoverageIncomplete':'WebpageClaimBoundariesInvalid');
- assert(reviews[1].input.validationFailure.previousOutput.blockCoverage);
+ assert(reviews[1].input.validationFailure.issues.length);
+ assert.equal(Object.hasOwn(reviews[1].input.validationFailure,'previousOutput'),false,'Do not feed the invalid answer back as a draft to copy');
  const ids=calls.map(c=>c.taskId);assert((await run(evidence,generate)).ok);assert.deepEqual(calls.map(c=>c.taskId),ids,'Resume reuses the repaired review and all paid history');
 });
 for(const technicalRetries of [true,false])test(`invalid coverage exhausts the existing bounded technical policy: ${technicalRetries}`,async()=>{

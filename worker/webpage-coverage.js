@@ -83,8 +83,8 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
     const sectionIds=new Set(blocks.map(b=>b.sectionId));
     /** @type {BlockCoverage[]|null} */let audited=null;
     /** @type {Awaited<ReturnType<FactRequest['generate']>>|undefined} */let extracted;
-    /** @type {Record<string,unknown>|undefined} */let previousOutput;
-    /** @type {{kind:string,previousOutput:Record<string,unknown>}|undefined} */let validationFailure;
+    /** @type {string[]} */let validationIssues=[];
+    /** @type {{kind:string,issues:string[]}|undefined} */let validationFailure;
     /** @type {Awaited<ReturnType<typeof batch>>} */let result;
     /** @type {BlockCoverage[]} */let completedCoverage;
     const maximumAttempts=dependencies.technicalRetries===false?1:4;
@@ -102,10 +102,10 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
         shape.required.push('blockCoverage');shape.properties.blockCoverage=coverageSchema(targets);
       }
       if(command.phase==='extraction'&&extracted)return structuredClone(extracted);
-      const generated=await dependencies.generate({...command,...(normalizing&&validationFailure?{taskId:`${command.taskId}:validation-${attempt}`} : {}),input:{...enriched,...(normalizing&&validationFailure?{validationFailure}: {})},systemPrompt:command.systemPrompt+(normalizing&&validationFailure?'\nYour previous response failed application validation. Repair the full review using validationFailure below. Keep every required block accounted for with exact final draft citations. candidates:null requires exactly one relationshipUnits entry for the unchanged parent; otherwise return distinct source-supported children, one per unit. Do not fabricate support or discard educational blocks to pass validation.':'')+(normalizing?coveragePrompt+(contextIds.size?'\nBlocks marked coverageRequired:false repeat already-audited context. They remain available for exact citations, but do not return blockCoverage entries for them. Audit every other block.':''):''),...(schema?{responseSchema:schema}:{})});
+      const generated=await dependencies.generate({...command,...(normalizing&&validationFailure?{taskId:`${command.taskId}:validation-${attempt}`} : {}),input:{...enriched,...(normalizing&&validationFailure?{validationFailure}: {})},systemPrompt:command.systemPrompt+(normalizing?coveragePrompt+(contextIds.size?'\nBlocks marked coverageRequired:false repeat already-audited context. They remain available for exact citations, but do not return blockCoverage entries for them. Audit every other block.':''):'')+(normalizing&&validationFailure?'\nCORRECTION REQUIRED: Fix every validationFailure.issues item. Return the full review again. For this correction candidates MUST be a nonempty array in EVERY review, never null. Return exactly one explicit child per relationshipUnits entry, in matching order, with distinct identities and only its parent captured support. An unchanged parent may be copied exactly as one explicit child with one unit. Update coverage hashes to the actual final children and cite each covered block exactly. Never fabricate support or discard educational blocks to pass.':''),...(schema?{responseSchema:schema}:{})});
       if(command.phase==='extraction'&&generated.ok)extracted=structuredClone(generated);
       if(!generated.ok||!normalizing)return generated;
-      previousOutput=structuredClone(generated.value);
+      validationIssues=[];
       const value=structuredClone(generated.value);
       if(Array.isArray(value.blockCoverage))value.blockCoverage=value.blockCoverage.filter(entry=>!record(entry)||!text(entry.blockId)||!contextIds.has(entry.blockId));
       const reviews=Array.isArray(value.reviews)?value.reviews:[];
@@ -117,13 +117,14 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       for(const review of reviews)if(record(review)&&review.candidates===null){
         const parent=originals.find(c=>record(c)&&c.normalizedHash===review.sourceNormalizedHash);
         const unit=Array.isArray(review.relationshipUnits)&&review.relationshipUnits.length===1?review.relationshipUnits[0]:null;
-        if(!record(parent)||!text(parent.normalizedHash)||!record(unit)||!text(unit.childNormalizedHash))return {ok:false,error:{kind:'WebpageClaimBoundariesInvalid'}};
+        if(!record(parent)||!text(parent.normalizedHash)||!record(unit)||!text(unit.childNormalizedHash)){validationIssues.push(`Review ${review.sourceNormalizedHash}: candidates:null requires exactly one relationshipUnits entry for the retained parent; received ${Array.isArray(review.relationshipUnits)?review.relationshipUnits.length:'invalid units'}. Return explicit children with one matching unit per child.`);continue;}
         if(unit.childNormalizedHash!==parent.normalizedHash){
           if(identities.has(unit.childNormalizedHash)||unchangedAliases.has(unit.childNormalizedHash))return {ok:false,error:{kind:'WebpageClaimBoundariesInvalid'}};
           unchangedAliases.set(unit.childNormalizedHash,parent.normalizedHash);
           unit.childNormalizedHash=parent.normalizedHash;
         }
       }
+      if(validationIssues.length)return {ok:false,error:{kind:'WebpageClaimBoundariesInvalid'}};
       if(Array.isArray(value.blockCoverage))for(const entry of value.blockCoverage)if(record(entry)&&Array.isArray(entry.candidateHashes))entry.candidateHashes=entry.candidateHashes.map(hash=>unchangedAliases.get(hash)??hash);
       const finalCandidates=[...reviews.flatMap(r=>record(r)?r.candidates===null?originals.filter(c=>record(c)&&c.normalizedHash===r.sourceNormalizedHash):Array.isArray(r.candidates)?r.candidates:[]:[]),...(Array.isArray(value.additionalCandidates)?value.additionalCandidates:[])];
       // A receipt needs a genuinely cited draft; discard extra unsupported associations without inventing support.
@@ -131,7 +132,10 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
         const block=blocks.find(b=>b.id===entry.blockId);
         if(block)entry.candidateHashes=entry.candidateHashes.filter(hash=>isCompleteBlockCoverage([{...entry,candidateHashes:[hash]}],[block],citations,finalCandidates));
       }
-      if(!isCompleteBlockCoverage(value.blockCoverage,targets,citations,finalCandidates))return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
+      if(!isCompleteBlockCoverage(value.blockCoverage,targets,citations,finalCandidates)){
+        validationIssues=targets.filter(block=>!isCompleteBlockCoverage(Array.isArray(value.blockCoverage)?[value.blockCoverage.find(entry=>record(entry)&&entry.blockId===block.id)]:[],[block],citations,finalCandidates)).map(block=>`Block ${block.id}: missing/invalid receipt or no listed final child actually cites this block. Return a supported cited child, an honest exclusion for noneducational context, or unresolved; do not claim a citation that is absent.`);
+        return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
+      }
       audited=structuredClone(value.blockCoverage);
       const {blockCoverage,...payload}=value;
       return {ok:true,value:payload};
@@ -144,7 +148,7 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
     if(!['WebpageCoverageIncomplete','WebpageClaimBoundariesInvalid'].includes(result.error.kind))return result;
     dependencies.logger({event:attempt===maximumAttempts?'webpage-facts-validation-failure':'webpage-facts-validation-retry',failureKind:result.error.kind});
     if(attempt===maximumAttempts)return {ok:false,error:{...result.error,technicalRetriesExhausted:true,technicalAttempts:maximumAttempts}};
-    validationFailure={kind:result.error.kind,previousOutput:previousOutput??{}};
+    validationFailure={kind:result.error.kind,issues:validationIssues.length?validationIssues:[`${result.error.kind}: return one explicit child per relationship unit using only original parent support, and one valid receipt per required block in supplied order.`]};
     }
     for(const candidate of result.value.candidates){
       const existing=candidates.find(c=>c.normalizedHash===candidate.normalizedHash);
