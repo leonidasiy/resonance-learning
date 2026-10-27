@@ -79,22 +79,24 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
     // Repeat captured table labels as citable context; account for each original block only once.
     const firstRows=new Map([...tables].map(table=>[table,rowPath(input.evidence.blocks.find(b=>tablePath(b)===table)??targets[0])]));
     const blocks=input.evidence.blocks.filter(b=>targetIds.has(b.id)||tables.has(tablePath(b))&&rowPath(b)!==undefined&&rowPath(b)===firstRows.get(tablePath(b)));
+    const contextIds=new Set(blocks.filter(b=>!targetIds.has(b.id)).map(b=>b.id));
     const sectionIds=new Set(blocks.map(b=>b.sectionId));
     /** @type {BlockCoverage[]|null} */let audited=null;
     const result=await batch({...dependencies,requireCoverage:false,taskId:`${dependencies.taskId}:coverage-v1:${index+1}`,input:{...input,evidence:{...input.evidence,blocks,headings:input.evidence.headings.filter(h=>sectionIds.has(h.sectionId)),images:[]}},generate:async command=>{
       const task=/** @type {Record<string,unknown>} */(command.input);
       const citations=/** @type {{sourceId:string,reference:unknown}[]} */(task.citationSources??[]);
       const sourceBlocks=/** @type {Record<string,unknown>[]} */(task.sourceBlocks??[]);
-      const enriched={...task,sourceBlocks:sourceBlocks.map(b=>({...b,citationReference:citations.find(c=>c.sourceId===b.id)?.reference})),sectionHeadings:input.evidence.headings.filter(h=>sectionIds.has(h.sectionId)).map(({sectionId,text})=>({sectionId,text}))};
+      const enriched={...task,sourceBlocks:sourceBlocks.map(b=>({...b,...(text(b.id)&&contextIds.has(b.id)?{coverageRequired:false}:{}),citationReference:citations.find(c=>c.sourceId===b.id)?.reference})),sectionHeadings:input.evidence.headings.filter(h=>sectionIds.has(h.sectionId)).map(({sectionId,text})=>({sectionId,text}))};
       const normalizing=command.phase==='normalization';
       const schema=command.responseSchema===undefined?undefined:{...structuredClone(command.responseSchema),name:command.responseSchema.name+'__coverage_v1'};
       if(normalizing&&schema){
         const shape=/** @type {{required:string[],properties:Record<string,unknown>}} */(schema.schema);
-        shape.required.push('blockCoverage');shape.properties.blockCoverage=coverageSchema(blocks);
+        shape.required.push('blockCoverage');shape.properties.blockCoverage=coverageSchema(targets);
       }
-      const generated=await dependencies.generate({...command,input:enriched,systemPrompt:command.systemPrompt+(normalizing?coveragePrompt:''),...(schema?{responseSchema:schema}:{})});
+      const generated=await dependencies.generate({...command,input:enriched,systemPrompt:command.systemPrompt+(normalizing?coveragePrompt+(contextIds.size?'\nBlocks marked coverageRequired:false repeat already-audited context. They remain available for exact citations, but do not return blockCoverage entries for them. Audit every other block.':''):''),...(schema?{responseSchema:schema}:{})});
       if(!generated.ok||!normalizing)return generated;
       const value=structuredClone(generated.value);
+      if(Array.isArray(value.blockCoverage))value.blockCoverage=value.blockCoverage.filter(entry=>!record(entry)||!text(entry.blockId)||!contextIds.has(entry.blockId));
       const reviews=Array.isArray(value.reviews)?value.reviews:[];
       const originals=Array.isArray(task.candidates)?task.candidates:[];
       const declared=[...originals,...reviews.flatMap(r=>record(r)&&Array.isArray(r.candidates)?r.candidates:[]),...(Array.isArray(value.additionalCandidates)?value.additionalCandidates:[])];
@@ -118,7 +120,7 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
         const block=blocks.find(b=>b.id===entry.blockId);
         if(block)entry.candidateHashes=entry.candidateHashes.filter(hash=>isCompleteBlockCoverage([{...entry,candidateHashes:[hash]}],[block],citations,finalCandidates));
       }
-      if(!isCompleteBlockCoverage(value.blockCoverage,blocks,citations,finalCandidates))return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
+      if(!isCompleteBlockCoverage(value.blockCoverage,targets,citations,finalCandidates))return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
       audited=structuredClone(value.blockCoverage);
       const {blockCoverage,...payload}=value;
       return {ok:true,value:payload};

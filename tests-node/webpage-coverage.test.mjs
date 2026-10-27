@@ -129,7 +129,7 @@ test('a failed tail drains the early review without marking the source complete'
  assert.equal(result.ok,false);assert.equal(result.error.kind,'SyntheticTailFailure');assert(finished);
 });
 
-test('coverage keeps table rows and captured column labels together across bounded batches',async()=>{
+for(const contextReceipt of ['omitted','incorrect','missing-target'])test(`coverage keeps table rows and labels together with ${contextReceipt} repeated-context receipts`,async()=>{
  const prefix='html:nth-of-type(1) > body:nth-of-type(1) > '+Array(8).fill('div:nth-of-type(1)').join(' > ')+' > table:nth-of-type(1)';
  const cells=Array.from({length:13},(_,row)=>Array.from({length:4},(_,column)=>{
   const locator=`${prefix} > tbody:nth-of-type(1) > tr:nth-of-type(${row+1}) > td:nth-of-type(${column+1}) > p:nth-of-type(1)`;
@@ -145,9 +145,16 @@ test('coverage keeps table rows and captured column labels together across bound
    }
    assert(cells.slice(0,4).every(header=>supplied.some(c=>c.id===header.id)),'Later table batches need captured column labels');
   }
-  return model(command);
+  const response=await model(command);
+  if(command.phase==='normalization'&&seen.length>1){
+   if(contextReceipt==='missing-target'){const target=response.value.blockCoverage.find(entry=>!cells.slice(0,4).some(header=>header.id===entry.blockId));response.value.blockCoverage=response.value.blockCoverage.filter(entry=>entry!==target);}
+   else if(contextReceipt==='omitted')response.value.blockCoverage=response.value.blockCoverage.filter(entry=>!cells.slice(0,4).some(header=>header.id===entry.blockId));
+   else for(const entry of response.value.blockCoverage)if(cells.slice(0,4).some(header=>header.id===entry.blockId))entry.candidateHashes=['not-cited-by-this-draft'];
+  }
+  return response;
  });
- assert(result.ok);assert(seen.length>1);
+ if(contextReceipt==='missing-target'){assert.equal(result.ok,false);assert.equal(result.error.kind,'WebpageCoverageIncomplete');return;}
+ assert(result.ok,JSON.stringify(result));assert(seen.length>1);
  assert.deepEqual(result.value.blockCoverage.map(c=>c.blockId),cells.map(c=>c.id));
  assert.equal(new Set(result.value.candidates.map(c=>c.normalizedHash)).size,result.value.candidates.length);
 });
