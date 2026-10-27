@@ -24,3 +24,15 @@ test('a partial review chunk defers whole-page selection and preserves pending d
  const result=await reviewKnowledgeBatch({points,review:async point=>point.id==='point-3'?{ok:false,error:{kind:'KnowledgeReviewChunkPending'}}:{ok:true,value:point},select:async()=>assert.fail('Selection requires all individual reviews')});
  assert.equal(result[3].error.kind,'KnowledgeReviewChunkPending');assert.equal(result[0].value,points[0]);
 });
+
+test('overlapping pipeline stages share three model slots and release them after failure',async()=>{
+ const {createModelRequestLimiter}=await import('../worker/knowledge-workflow-parallel-review.js');
+ const slot=createModelRequestLimiter();let active=0,maximum=0,finished=0;
+ const results=await Promise.allSettled(Array.from({length:12},(_,i)=>slot(async()=>{
+  active++;maximum=Math.max(maximum,active);
+  try{await new Promise(resolve=>setTimeout(resolve,1));if(i===1)throw Error('Synthetic provider failure');return i;}
+  finally{active--;finished++;}
+ })));
+ assert.equal(maximum,3);assert.equal(active,0);assert.equal(finished,12);assert.equal(results.filter(result=>result.status==='rejected').length,1);
+ assert.equal(await slot(async()=>42),42);
+});

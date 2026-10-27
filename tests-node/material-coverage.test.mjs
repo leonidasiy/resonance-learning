@@ -13,8 +13,8 @@ test('uploaded text splitting preserves exact content including Unicode and fina
   for(const block of evidence.blocks){const [start,end]=block.locator.split('text-codepoints=')[1].split(':').map(Number);assert.equal(Array.from(section.text).slice(start,end).join(''),block.text);}
 });
 for(const kind of ['PDF page','slide','plain text','transcript','captured-page PDF'])test(`${kind} uses complete uploaded-text accounting`,async()=>{
-  const seen=[];
-  const result=await requestMaterialBatch({requireCoverage:true,reviewMaterial:false,taskId:'material',input:{mode:'text',sections:[section],fileName:kind,coverageGoals:[],progress:{},previousKnowledge:[{id:'saved',summary:'A saved unrelated concept.'}]},maxOutputTokens:4096,logger:()=>{},generate:async c=>{
+  const seen=[];let handoffs=0;
+  const result=await requestMaterialBatch({requireCoverage:true,onDrafts:async page=>{handoffs++;assert.equal(page.url,section.url);assert(page.candidates.length>0);assert(page.candidates.every(candidate=>candidate.evidenceAnchors.every(anchor=>anchor.selector===section.locator)));return {ok:true,value:null};},reviewMaterial:false,taskId:'material',input:{mode:'text',sections:[section],fileName:kind,coverageGoals:[],progress:{},previousKnowledge:[{id:'saved',summary:'A saved unrelated concept.'}]},maxOutputTokens:4096,logger:()=>{},generate:async c=>{
     const task=c.input;assert.deepEqual(task.previousKnowledge,[{id:'saved',summary:'A saved unrelated concept.'}]);
     if(c.phase==='extraction'){
       seen.push(...task.sourceBlocks.map(b=>b.id));
@@ -22,7 +22,7 @@ for(const kind of ['PDF page','slide','plain text','transcript','captured-page P
     }
     return {ok:true,value:{notes:'Synthetic audit.',reviews:task.candidates.map(c=>({sourceNormalizedHash:c.normalizedHash,relationshipUnits:[{condition:null,relationship:c.summary,childNormalizedHash:c.normalizedHash}],candidates:null})),additionalCandidates:[],blockCoverage:task.sourceBlocks.map(b=>({blockId:b.id,disposition:'candidates',candidateHashes:[b.id],reason:'A source-supported relationship.'}))}};
   }});
-  assert(result.ok);assert.deepEqual(seen,evidence.blocks.map(b=>b.id));assert.equal(result.value[0].blockCoverage.length,evidence.blocks.length);
+  assert(result.ok);assert.equal(handoffs,1);assert.deepEqual(seen,evidence.blocks.map(b=>b.id));assert.equal(result.value[0].blockCoverage.length,evidence.blocks.length);
   assert.equal(result.value[0].candidates.map(c=>c.evidenceAnchors[0].quote).join(''),section.text);
   assert(result.value[0].candidates.every(c=>c.evidenceAnchors[0].selector===section.locator));
 });

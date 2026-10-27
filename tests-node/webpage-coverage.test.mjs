@@ -108,3 +108,23 @@ test('coverage still fails when its only draft does not cite the claimed source 
   });
   assert.equal(result.ok,false);assert.equal(result.error.kind,'WebpageCoverageIncomplete');
 });
+
+test('validated first drafts enter review while later chunks extract, and all handoffs settle before return',async()=>{
+ const source={...evidence,blocks:blocks.map(b=>({...b,text:b.text.repeat(25)}))};
+ let release,started=false,settled=false,laterExtraction=false;
+ const gate=new Promise(resolve=>{release=resolve;}),model=responder();
+ const result=await requestWebpageFacts({requireCoverage:true,normalizeClaims:true,deferQualityReview:true,taskId:'pipeline',input:{url,evidence:source,coverageGoals:[]},maxOutputTokens:4096,logger:()=>{},onDrafts:async drafts=>{
+  assert(drafts.length>0);assert(drafts.length<30);started=true;await gate;settled=true;return {ok:true,value:null};
+ },generate:async command=>{
+  if(command.phase==='extraction'&&command.taskId.includes(':coverage-v1:2')){assert(started);assert(!settled);laterExtraction=true;release();}
+  return model(command);
+ }});
+ assert(result.ok);assert(laterExtraction);assert(settled);assert.equal(result.value.blockCoverage.length,30);
+});
+
+test('a failed tail drains the early review without marking the source complete',async()=>{
+ const source={...evidence,blocks:blocks.map(b=>({...b,text:b.text.repeat(25)}))};let finished=false;
+ const model=responder();
+ const result=await requestWebpageFacts({requireCoverage:true,normalizeClaims:true,deferQualityReview:true,taskId:'pipeline-failure',input:{url,evidence:source,coverageGoals:[]},maxOutputTokens:4096,logger:()=>{},onDrafts:async()=>{await new Promise(resolve=>setTimeout(resolve,5));finished=true;return {ok:true,value:null};},generate:command=>command.taskId.includes(':coverage-v1:2')?Promise.resolve({ok:false,error:{kind:'SyntheticTailFailure'}}):model(command)});
+ assert.equal(result.ok,false);assert.equal(result.error.kind,'SyntheticTailFailure');assert(finished);
+});

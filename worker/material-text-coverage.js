@@ -23,10 +23,10 @@ export function materialTextEvidence(section) {
 /** @param {import('./knowledge-workflow-runtime.js').MaterialBatchRequest} dependencies
  * @returns {Promise<import('../src/features/knowledge-workflows/extraction.js').Result<readonly {url:string,notes:string,candidates:readonly import('../src/features/knowledge-workflows/extraction.js').KnowledgeCandidate[],blockCoverage?:readonly import('./webpage-coverage.js').BlockCoverage[]}[],{kind:string}>>} */
 export async function requestCoveredMaterialText(dependencies) {
-  const input=dependencies.input;
+  const input=dependencies.input,onDrafts=dependencies.onDrafts;
   const pages=[];
   for(const section of input.sections){
-    const result=await requestWebpageFacts({requireCoverage:true,normalizeClaims:true,deferQualityReview:true,structuredOutput:true,taskId:`${dependencies.taskId}:text:${section.id}`,input:{url:section.url,evidence:materialTextEvidence(section),coverageGoals:input.coverageGoals,previousKnowledge:input.previousKnowledge??[],lessOften:input.lessOften??[]},maxOutputTokens:dependencies.maxOutputTokens,generate:dependencies.generate,logger:dependencies.logger});
+    const result=await requestWebpageFacts({requireCoverage:true,onDrafts:onDrafts===undefined?undefined:candidates=>onDrafts({url:section.url,candidates:candidates.map(candidate=>({...candidate,evidenceAnchors:candidate.evidenceAnchors.map(anchor=>({...anchor,selector:section.locator}))}))}),normalizeClaims:true,deferQualityReview:true,structuredOutput:true,taskId:`${dependencies.taskId}:text:${section.id}`,input:{url:section.url,evidence:materialTextEvidence(section),coverageGoals:input.coverageGoals,previousKnowledge:input.previousKnowledge??[],lessOften:input.lessOften??[]},maxOutputTokens:dependencies.maxOutputTokens,generate:dependencies.generate,logger:dependencies.logger});
     if(!result.ok)return result;
     // Material reviewers locate the containing original section; literal sub-block quotes and digests remain intact.
     pages.push({url:section.url,notes:result.value.notes,candidates:result.value.candidates.map(candidate=>({...candidate,evidenceAnchors:candidate.evidenceAnchors.map(anchor=>({...anchor,selector:section.locator}))})),blockCoverage:result.value.blockCoverage});

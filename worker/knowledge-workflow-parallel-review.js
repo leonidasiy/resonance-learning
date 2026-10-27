@@ -36,3 +36,16 @@ export async function reviewKnowledgeBatch({points,review,select}) {
   const kept = new Set(/** @type {string[]} */ (ids));
   return results.map(result=>result.ok&&result.value!==null&&!kept.has(result.value.id)?{ok:true,value:null}:result);
 }
+
+/** Share the existing request ceiling across extraction, knowledge review and quizzes.
+ * @returns {<T>(work:()=>Promise<T>)=>Promise<T>} */
+export function createModelRequestLimiter() {
+  let active=0;
+  /** @type {(()=>void)[]} */const waiting=[];
+  return async work=>{
+    if(active>=KNOWLEDGE_REVIEW_WIDTH)await new Promise(resolve=>waiting.push(()=>resolve(undefined)));
+    else active++;
+    try{return await work();}
+    finally{const next=waiting.shift();if(next)next();else active--;}
+  };
+}

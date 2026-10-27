@@ -367,3 +367,27 @@ Deno.test("executor checkpoints one quiz chunk and completes only after the rema
   assert(completed.ok,"Last quiz chunk must succeed");if(!completed.ok)return;
   assertEquals(completed.value.state,"completed");assertEquals(completed.value.run.counts.knowledgePoints,2);assertEquals(completed.value.run.failureKind,"WorkflowPagesFailed");
 });
+
+Deno.test('a committed point starts its quiz while extraction continues, and the page stays incomplete',async()=>{
+ let extracting=true,quizStarted=false,quizFinished=false;
+ /** @type {()=>void} */let release=()=>{};
+ const gate=new Promise(resolve=>{release=()=>resolve(undefined);});
+ const point={id:'knowledge-a',sourceId:'source-a',sourceRevision:1,summary:'A supported relationship',normalizedHash:'a',evidenceAnchors:[{url:'https://example.test/learn',selector:'p'}],coverageGoalIds:[],mediaCandidates:[],attribution:{sourceUrl:'https://example.test/learn'},extractionVersion:'v1'};
+ const executor=createKnowledgeWorkflowExecutor({
+  transition:async({run:current,nextState,counts})=>{assertEquals(quizFinished,true);return {ok:true,value:{...current,state:nextState,revision:current.revision+1,counts:counts??current.counts}};},
+  robots:{check:async()=>({ok:true,value:{}})},
+  extraction:{run:async command=>{
+   command.onKnowledge?.();
+   await gate;assertEquals(quizStarted,true);assertEquals(quizFinished,false);extracting=false;
+   return {ok:true,value:{state:'awaiting-time-limit-decision',scratchpad:{},knowledgePointCount:1,pagesProcessed:0}};
+  }},
+  knowledge:{list:async()=>({ok:true,value:[point]})},
+  classification:{ensure:async command=>{assertEquals(command.incremental,true);return {ok:true,value:null};}},
+  quiz:{run:async()=>{
+   assertEquals(extracting,true);quizStarted=true;release();await Promise.resolve();await Promise.resolve();quizFinished=true;
+   return {ok:true,value:{dispositions:[{knowledgeId:point.id,status:'accepted',publicationStatus:'published',attempts:1,failureKind:null,restrictedUntil:null}]}};
+  }},logger:()=>{},
+ });
+ const result=await executor.run({run:run('extraction-loop'),rootUrl:'https://example.test/learn',rightsAssessment:rights()});
+ if(!result.ok)throw Error(JSON.stringify(result.error));assertEquals(result.value.state,'awaiting-time-limit-decision');assertEquals(result.value.run.counts.knowledgePoints,1);assertEquals(result.value.run.counts.acceptedQuizzes,1);assertEquals(result.value.run.counts.pages,0);
+});

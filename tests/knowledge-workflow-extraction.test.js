@@ -996,3 +996,29 @@ for(const mode of ['page','batch'])for(const expired of [false,true])Deno.test(`
  assertEquals(result.ok,expired);assertEquals(calls,2);assertEquals(fixture.points.length,1);
  if(result.ok){assertEquals(result.value.state,'awaiting-time-limit-decision');assertEquals(result.value.stopReason,'time-limit');assertEquals(result.value.pagesProcessed,1);assertEquals(result.value.knowledgePointCount,1);assertEquals(result.value.scratchpad.processedUrls.join(','),urls[0]);assertEquals(result.value.scratchpad.failedPages?.length??0,0);}
 });
+
+Deno.test('ready reviews publish durably while later drafts remain pending, without completing the page',async()=>{
+ const fixture=setup(),url='https://example.test/a';let wave=0,notifications=0;
+ const original=fixture.dependencies.acquirer.fetchPage;
+ const runner=createExtractionRunner({...fixture.dependencies,orderedUrls:[url],onKnowledge:()=>{notifications++;assertEquals(fixture.points.length,notifications);},
+  acquirer:{fetchPage:async command=>{const r=await original(command);if(!r.ok)return r;return {ok:true,value:{...r.value,candidates:[r.value.candidates[0],{...r.value.candidates[0],normalizedHash:'later',summary:'Later relationship'}]}};}},
+  reviewer:{review:async point=>({ok:true,value:point}),reviewBatch:async points=>points.map(point=>point.normalizedHash==='later'&&wave===0?{ok:false,error:{kind:'KnowledgeReviewChunkPending'}}:{ok:true,value:point})},
+ });
+ const command={ownerId:'owner-a',runId:'run-a',sourceId:'source-a',sourceRevision:1,rootUrl:url,startedAtMs:0,deadlineAtMs:1800000};
+ const first=await runner.run(command);if(!first.ok)throw Error(JSON.stringify(first.error));
+ assertEquals(first.value.state,'awaiting-time-limit-decision');assertEquals(first.value.knowledgePointCount,1);assertEquals(first.value.pagesProcessed,0);assertEquals(first.value.scratchpad.processedUrls.length,0);assertEquals(notifications,1);
+ wave++;const second=await runner.run(command);if(!second.ok)throw Error(JSON.stringify(second.error));
+ assertEquals(second.value.state,'completed');assertEquals(second.value.knowledgePointCount,2);assertEquals(fixture.points.length,2);assertEquals(notifications,2);
+});
+
+Deno.test('early draft handoff uses the same publication checks before full source acquisition completes',async()=>{
+ const fixture=setup(),url='https://example.test/a';let acquiring=true;
+ const original=fixture.dependencies.acquirer.fetchPage;
+ const runner=createExtractionRunner({...fixture.dependencies,orderedUrls:[url],onKnowledge:()=>assertEquals(acquiring,true),acquirer:{fetchPage:async command=>{
+  const r=await original(command);if(!r.ok)return r;
+  const handed=await command.onDrafts?.(r.value);assertEquals(handed?.ok,true);assertEquals(fixture.points.length,1);
+  acquiring=false;return r;
+ }}});
+ const result=await runner.run({ownerId:'owner-a',runId:'run-a',sourceId:'source-a',sourceRevision:1,rootUrl:url,startedAtMs:0,deadlineAtMs:1800000});
+ if(!result.ok)throw Error(JSON.stringify(result.error));assertEquals(result.value.state,'completed');assertEquals(fixture.points.length,1);
+});

@@ -60,6 +60,8 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
   /** @type {Facts['partialIssues'][number][]} */const partialIssues=[];
   /** @type {BlockCoverage[]} */const coverage=[];
   /** @type {string[]} */const notes=[];
+  /** @type {Promise<import('./webpage-facts.js').Result<null>>|undefined} */let ready;
+  try {
   for(let index=0;index<chunks.length;index++){
     const blocks=chunks[index],sectionIds=new Set(blocks.map(b=>b.sectionId));
     /** @type {BlockCoverage[]|null} */let audited=null;
@@ -113,6 +115,10 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       if(!existing)candidates.push(candidate);
     }
     coverage.push(.../** @type {BlockCoverage[]} */(audited));partialIssues.push(...result.value.partialIssues);notes.push(result.value.notes);
+    // One bounded early wave overlaps later extraction; remaining drafts stay in the complete observation.
+    if(ready===undefined&&result.value.candidates.length&&dependencies.onDrafts)ready=dependencies.onDrafts(result.value.candidates).catch(()=>({ok:false,error:{kind:'KnowledgeReviewFailed'}}));
   }
+  }finally{await ready;}
+  const handed=await ready;if(handed&&!handed.ok)return handed;
   return {ok:true,value:{candidates:Object.freeze(candidates),notes:notes.join('\n').slice(0,2000),status:candidates.length?(partialIssues.length?'partial':'complete'):'empty',partialIssues:Object.freeze(partialIssues),blockCoverage:Object.freeze(coverage)}};
 }

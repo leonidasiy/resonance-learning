@@ -32,10 +32,10 @@ import { isWorkflowRobotsEvidence } from "./workflow.js";
 
 /** @typedef {{ readonly run: KnowledgeWorkflowRun, readonly rootUrl: string, readonly rightsAssessment?: RightsDecision }} WorkflowExecutionCommand */
 /** @typedef {{ readonly check: (command: { readonly rights: RightsDecision, readonly targetUrl?: string }) => Promise<Result<unknown, unknown>> }} WorkflowRobots */
-/** @typedef {{ readonly run: (command: { readonly run: KnowledgeWorkflowRun, readonly rights: RightsDecision, readonly robots: unknown }) => Promise<Result<{ readonly state: "completed" | "paused" | "awaiting-time-limit-decision", readonly scratchpad: unknown, readonly knowledgePointCount: number, readonly pagesProcessed: number }, unknown>> }} WorkflowExtraction */
-/** @typedef {{ readonly reviewedEmpty?: (scope:{readonly ownerId:string,readonly runId:string,readonly sourceId:string,readonly sourceRevision:number})=>Promise<Result<boolean,unknown>>, readonly list: (scope: { readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number }) => Promise<Result<readonly KnowledgePoint[], unknown>> }} WorkflowKnowledge */
+/** @typedef {{ readonly run: (command: { readonly run: KnowledgeWorkflowRun, readonly rights: RightsDecision, readonly robots: unknown, readonly onKnowledge?: () => void }) => Promise<Result<{ readonly state: "completed" | "paused" | "awaiting-time-limit-decision", readonly scratchpad: unknown, readonly knowledgePointCount: number, readonly pagesProcessed: number }, unknown>> }} WorkflowExtraction */
+/** @typedef {{ readonly reviewedEmpty?: (scope:{readonly ownerId:string,readonly runId:string,readonly sourceId:string,readonly sourceRevision:number})=>Promise<Result<boolean,unknown>>, readonly list: (scope: { readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number, readonly incremental?: boolean }) => Promise<Result<readonly KnowledgePoint[], unknown>> }} WorkflowKnowledge */
 /** @typedef {{ readonly run: (command: { readonly ownerId: string, readonly runId: string, readonly points: readonly KnowledgePoint[] }) => Promise<Result<QuizRunResult & {readonly hasMore?:boolean}, unknown>> }} WorkflowQuiz */
-/** @typedef {{ readonly ensure: (command: { readonly ownerId: string, readonly sourceId: string, readonly sourceRevision: number, readonly points: readonly KnowledgePoint[] }) => Promise<Result<null, unknown>> }} WorkflowClassification */
+/** @typedef {{ readonly ensure: (command: { readonly ownerId: string, readonly sourceId: string, readonly sourceRevision: number, readonly points: readonly KnowledgePoint[], readonly incremental?: boolean }) => Promise<Result<null, unknown>> }} WorkflowClassification */
 /** @typedef {{ readonly close: () => Promise<Result<null, unknown>> }} WorkflowCleanup */
 /** @typedef {{ readonly transition: (command: { readonly run: KnowledgeWorkflowRun, readonly nextState: WorkflowState, readonly counts?: { readonly pages: number, readonly knowledgePoints: number, readonly acceptedQuizzes: number, readonly pendingQuizzes: number }, readonly robotsEvidence?: WorkflowRobotsEvidence | null, readonly failureKind?: string | null }) => Promise<Result<KnowledgeWorkflowRun, unknown>>, readonly robots: WorkflowRobots, readonly extraction: WorkflowExtraction, readonly knowledge: WorkflowKnowledge, readonly classification: WorkflowClassification, readonly quiz: WorkflowQuiz, readonly cleanup?: WorkflowCleanup, readonly logger: (entry: { readonly event: string, readonly runId?: string, readonly stage?: string, readonly failureKind?: string, readonly diagnosticToken?: string }) => void }} WorkflowExecutorDependencies */
 
@@ -135,8 +135,29 @@ export function createKnowledgeWorkflowExecutor(dependencies) {
       }
       if (current.state === "extraction-loop" || current.state === "paused" || current.state === "awaiting-time-limit-decision") {
         if (!rightsMatch(command, current)) return fail({ stage: "rights", causeKind: "WorkflowRightsRequired" }, dependencies, current.runId);
+        /** @type {Promise<Result<QuizRunResult,WorkflowExecutorFailure>>|undefined} */ let readyQuiz;
+        const onKnowledge=()=>{
+          if(readyQuiz!==undefined)return;
+          // Start only from committed knowledge, and settle admitted work before any state transition.
+          readyQuiz=(async()=>{
+            const scope={ownerId:current.ownerId,runId:current.runId,sourceId:current.sourceId,sourceRevision:current.sourceRevision};
+            let points;
+            try{points=await dependencies.knowledge.list({...scope,incremental:true});}catch(error){return {ok:false,error:operationFailure('knowledge','WorkflowKnowledgeLoadFailed',error,'extraction-loop','KnowledgeRepositoryRejected')};}
+            if(!points.ok)return {ok:false,error:operationFailure('knowledge','WorkflowKnowledgeLoadFailed',points.error,'extraction-loop')};
+            if(!points.value.every(point=>knowledgeScopeMatches(point,current)))return {ok:false,error:{stage:'knowledge',causeKind:'WorkflowKnowledgeScopeInvalid',resumableState:'extraction-loop'}};
+            if(points.value.length===0)return {ok:true,value:{dispositions:[]}};
+            let classification;
+            try{classification=await dependencies.classification.ensure({...scope,points:points.value,incremental:true});}catch(error){return {ok:false,error:operationFailure('classification','WorkflowSourceClassificationFailed',error,'extraction-loop','SourceClassificationDependencyRejected')};}
+            if(!classification.ok)return {ok:false,error:operationFailure('classification','WorkflowSourceClassificationFailed',classification.error,'extraction-loop')};
+            try{const quiz=await dependencies.quiz.run({...scope,points:points.value});return quiz.ok?quiz:{ok:false,error:operationFailure('quiz','WorkflowQuizFailed',quiz.error,'extraction-loop')};}catch(error){return {ok:false,error:operationFailure('quiz','WorkflowQuizFailed',error,'extraction-loop','QuizGenerationRejected')};}
+          })();
+        };
+        if(current.state==='extraction-loop'&&current.counts.knowledgePoints>0)onKnowledge();
         let extracted;
-        try { extracted = await dependencies.extraction.run({ run: current, rights: command.rightsAssessment, robots: { status: "allowed" } }); } catch (error) { return fail(operationFailure("extraction", "WorkflowExtractionFailed", error, current.state, "ExtractionDependencyRejected"), dependencies, current.runId); }
+        try { extracted = await dependencies.extraction.run({ run: current, rights: command.rightsAssessment, robots: { status: "allowed" },onKnowledge }); }
+        catch (error) { await readyQuiz; return fail(operationFailure("extraction", "WorkflowExtractionFailed", error, current.state, "ExtractionDependencyRejected"), dependencies, current.runId); }
+        const incremental=await readyQuiz;
+        const extractionCounts=incremental?.ok?{...current.counts,acceptedQuizzes:Math.max(current.counts.acceptedQuizzes,incremental.value.dispositions.filter(d=>d.status==='accepted').length),pendingQuizzes:Math.max(current.counts.pendingQuizzes,incremental.value.dispositions.filter(d=>d.publicationStatus==='pending-review').length)}:current.counts;
         if (!extracted.ok) {
           const detailKind = record(extracted.error) && text(extracted.error.causeKind)
             ? extracted.error.causeKind
@@ -144,13 +165,14 @@ export function createKnowledgeWorkflowExecutor(dependencies) {
           const detailDiagnosticToken = record(extracted.error) && typeof extracted.error.diagnosticToken === "string" && /^[a-z0-9-]+$/u.test(extracted.error.diagnosticToken) ? extracted.error.diagnosticToken : undefined;
           return fail({ stage: "extraction", causeKind: detailKind !== undefined && requiresAuthorizedMaterial(detailKind) ? "WorkflowUploadRequired" : detailKind !== undefined && isRobotsFailure(detailKind) ? "WorkflowRobotsFailed" : "WorkflowExtractionFailed", ...(detailKind === undefined ? {} : { detailKind }), ...(detailDiagnosticToken === undefined ? {} : { detailDiagnosticToken }), resumableState: current.state }, dependencies, current.runId);
         }
+        if(incremental&&!incremental.ok)return fail(incremental.error,dependencies,current.runId);
         if (extracted.value.state === "paused" || extracted.value.state === "awaiting-time-limit-decision") {
-          const transitioned = await transition(dependencies, { run: current, nextState: extracted.value.state, counts: { ...current.counts, pages: Math.max(current.counts.pages, extracted.value.pagesProcessed), knowledgePoints: Math.max(current.counts.knowledgePoints, extracted.value.knowledgePointCount) } });
+          const transitioned = await transition(dependencies, { run: current, nextState: extracted.value.state, counts: { ...extractionCounts, pages: Math.max(current.counts.pages, extracted.value.pagesProcessed), knowledgePoints: Math.max(current.counts.knowledgePoints, extracted.value.knowledgePointCount) } });
           if (!transitioned.ok) return fail(operationFailure("transition", "WorkflowTransitionFailed", transitioned.error, current.state), dependencies, current.runId);
           return { ok: true, value: freeze({ state: transitioned.value.state, run: transitioned.value }) };
         }
         const failedPages = record(extracted.value.scratchpad) && Array.isArray(extracted.value.scratchpad.failedPages) ? extracted.value.scratchpad.failedPages.length : 0;
-        const finalized = await transition(dependencies, { run: current, nextState: "extraction-finalized", failureKind: failedPages > 0 ? "WorkflowPagesFailed" : current.failureKind === "WorkflowRetryFailedPages" ? current.failureKind : null, counts: { ...current.counts, pages: Math.max(current.counts.pages, extracted?.value?.pagesProcessed ?? current.counts.pages), knowledgePoints: Math.max(current.counts.knowledgePoints, extracted?.value?.knowledgePointCount ?? current.counts.knowledgePoints) } });
+        const finalized = await transition(dependencies, { run: current, nextState: "extraction-finalized", failureKind: failedPages > 0 ? "WorkflowPagesFailed" : current.failureKind === "WorkflowRetryFailedPages" ? current.failureKind : null, counts: { ...extractionCounts, pages: Math.max(current.counts.pages, extracted?.value?.pagesProcessed ?? current.counts.pages), knowledgePoints: Math.max(current.counts.knowledgePoints, extracted?.value?.knowledgePointCount ?? current.counts.knowledgePoints) } });
         if (!finalized.ok) return fail(operationFailure("transition", "WorkflowTransitionFailed", finalized.error, current.state), dependencies, current.runId);
         current = finalized.value;
       }

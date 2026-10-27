@@ -19,7 +19,7 @@ import {createKnowledgeWorkflowLogger} from '../worker/knowledge-workflow-loggin
 
 for(const {partial,blockedImage,resumedPage,sessionImage,cacheResume,authoritativePrevious,retryWindow,stalePhase,cachedRetry,largePage,callbackRetry,batchRetry,qualityFailure} of [{qualityFailure:true,partial:false,blockedImage:true},{partial:false,blockedImage:true,largePage:true,batchRetry:true},{partial:false,blockedImage:true,largePage:true,callbackRetry:true},{partial:false,blockedImage:true,largePage:200},{partial:false,blockedImage:true,largePage:true},{partial:false,blockedImage:false,largePage:true,sessionImage:"associated"},{partial:false,blockedImage:true,retryWindow:true,stalePhase:true,cachedRetry:true},{partial:false,blockedImage:true,retryWindow:true},{partial:false,blockedImage:true,stalePhase:true},{partial:false,blockedImage:false,authoritativePrevious:true},{partial:false,blockedImage:false,sessionImage:'associated',cacheResume:true},{partial:false,blockedImage:false},{partial:true,blockedImage:false},{partial:false,blockedImage:true},{partial:false,blockedImage:true,resumedPage:true},...['success','associated','blocked','corrupt','mismatch','oversize','throw'].map(sessionImage=>({partial:false,blockedImage:false,sessionImage}))])test(qualityFailure?'mocked exhausted quiz quality preserves verified knowledge and supports targeted retry':batchRetry?'mocked failed batch-selection retry preserves successful acquisition and point reviews':callbackRetry?'mocked owner resume recovers a cached callback failure without replaying successful source acquisition':largePage?`mocked ${typeof largePage==='number'?largePage:48}-candidate webpage checkpoints reviews and images under the D1 invocation allowance: ${sessionImage??'text'}`:cachedRetry?'mocked webpage resume replays the cached successful retry without another extraction call':retryWindow?'mocked webpage extraction keeps a successful technical retry after the first request deadline expires':stalePhase?'mocked webpage resume ignores an expired duplicate phase reservation without rewriting it':authoritativePrevious?'mocked partial-page observer and normalizer retain same-page and other-page committed knowledge and preferences':cacheResume?'mocked production cached original rehydrates reviewer pixels without a browser read or new debit':sessionImage?`mocked production browser-session image ${sessionImage} uses observed scope and never backend fallback`:resumedPage?'mocked production resume retains expired page reservation and accepts a bounded new revision read':blockedImage?'mocked production figure caption retains reviewed text after optional image403; no pixels fabricated':`mocked production webpage runtime retains text and explicit partial=${partial} issues after association fails; no network`,async(t)=>{
  const candidateCount=typeof largePage==='number'?largePage:48;const selected=index=>largePage!==200||index%10!==0;const selectedCount=Array.from({length:candidateCount},(_,index)=>index).filter(selected).length;
- const db=new DatabaseSync(':memory:'),originalFetch=globalThis.fetch;let network=0,timeOffset=0,historicalPhase,interruptedAfterRetry=false,queryCount=0,pageReads=0,batchSelections=0,browserCaptured=false,callbackRecovered=false,batchRecovered=false,qualityRecovered=false,quizDrafts=0;const queryCounts=[];const countQuery=()=>{if(largePage&&++queryCount>1000)throw Error("Too many subrequests");};
+ const db=new DatabaseSync(':memory:'),originalFetch=globalThis.fetch;let network=0,timeOffset=0,historicalPhase,interruptedAfterRetry=false,queryCount=0,pageReads=0,batchSelections=0,selectionOffset=0,browserCaptured=false,callbackRecovered=false,batchRecovered=false,qualityRecovered=false,quizDrafts=0;const queryCounts=[];const countQuery=()=>{if(largePage&&++queryCount>1000)throw Error("Too many subrequests");};
  globalThis.fetch=()=>{network++;assert.fail('ZERO_NETWORK_SENTINEL');};
  try{
   for(const name of (await readdir('worker/migrations')).filter(n=>n.endsWith('.sql')).sort())db.exec(await readFile('worker/migrations/'+name,'utf8'));
@@ -59,7 +59,7 @@ for(const {partial,blockedImage,resumedPage,sessionImage,cacheResume,authoritati
    }
    if(task.operation==='extract-webpage-facts')assert.equal(body.model,configs['knowledge-scraper'].model.name);
    let output;
-   if(body.response_format?.json_schema?.name==='knowledge_batch_selection_v1'){if(batchRetry&&!batchRecovered)return Response.json({id:'synthetic-truncated',choices:[{finish_reason:'length',message:{content:'{'}}]});if(largePage)assert(task.points.every(point=>/^\d{1,3}$/.test(point.id)),'Whole-page selection must use bounded local aliases, not long persistence IDs');batchSelections++;output={keptKnowledgeIds:task.points.filter((point,index)=>selected(index)).map(point=>point.id)};}
+   if(body.response_format?.json_schema?.name==='knowledge_batch_selection_v1'){if(batchRetry&&!batchRecovered)return Response.json({id:'synthetic-truncated',choices:[{finish_reason:'length',message:{content:'{'}}]});if(largePage)assert(task.points.every(point=>/^\d{1,3}$/.test(point.id)),'Whole-page selection must use bounded local aliases, not long persistence IDs');batchSelections++;output={keptKnowledgeIds:task.points.filter((point,index)=>selected(selectionOffset+index)).map(point=>point.id)};selectionOffset+=task.points.length;}
    else if(body.response_format?.json_schema?.name==='public_webpage_access_v1')output={access:'public',reason:'Synthetic visible source',evidenceBlockIds:[block.id]};
    else if(task.operation==='plan'||task.operation==='replan')output={revision:1,frontier:task.operation==='plan'?[url]:[],coverageGoals:[],unresolvedGaps:[],stopDecision:{decision:task.operation==='plan'?'continue':'complete',rationale:'Synthetic captured source.',evidenceUrls:[url],unresolvedGapIds:[]}};
    else if(task.operation==='extract-webpage-facts'){assert.equal(body.response_format.type,'json_schema');assert(!Array.isArray(message));output={notes:'',candidates:[...(partial?[null]:[]),...Array.from({length:largePage?candidateCount:1},(_,index)=>({summary:block.text,normalizedHash:largePage?'ratio-'+index:'ratio',coverageGoalIds:[],mediaCandidates:[],evidenceAnchors:[{reference:task.citationSources.find(s=>s.sourceId===block.id).reference,clause:block.text}]}))]};}
@@ -107,13 +107,8 @@ for(const {partial,blockedImage,resumedPage,sessionImage,cacheResume,authoritati
    run=unwrap(await service.control({ownerId,runId,expectedRevision:run.revision,action:'resume',idempotencyKey:'owner-callback-retry'}));
   }
   if(batchRetry){
-   for(let execution=0;execution<candidateCount;execution++){
-    queryCount=0;const result=await runtime.execute(run);assert.equal(result.ok,true,JSON.stringify(result));
-    run=unwrap(await repository.findById(ownerId,runId));
-    if(run.state==='completed')break;
-    assert.equal(run.state,'awaiting-time-limit-decision');run=unwrap(await service.advance({ownerId,runId,expectedRevision:run.revision,nextState:'extraction-loop'}));
-   }
-   assert.equal(run.failureKind,'WorkflowPagesFailed');assert.equal(textCritics,candidateCount);assert.equal(pageReads,1);
+   unwrap(await runtime.execute(run));run=unwrap(await repository.findById(ownerId,runId));
+   assert.equal(run.failureKind,'WorkflowPagesFailed');assert.equal(textCritics,3);assert.equal(pageReads,1);
    batchRecovered=true;timeOffset+=1000;
    run=unwrap(await service.control({ownerId,runId,expectedRevision:run.revision,action:'resume',idempotencyKey:'owner-batch-retry'}));
   }
@@ -123,14 +118,14 @@ for(const {partial,blockedImage,resumedPage,sessionImage,cacheResume,authoritati
     run=unwrap(await repository.findById(ownerId,runId));
     if(run.state==='completed')break;
     if(run.state==='awaiting-time-limit-decision'){
-     if(run.counts.knowledgePoints>0)assert.equal(textCritics,candidateCount+(batchRetry?3:0),'All reviews finish before any ordered publication');
+     if(execution===0){assert(run.counts.knowledgePoints>0,'The first reviewed chunk publishes before the rest of the page');assert(textCritics<candidateCount,'Later drafts remain unreviewed after the first publication');assert(run.counts.acceptedQuizzes>0,'Quizzes are usable before page review completes');}
      run=unwrap(await service.advance({ownerId,runId,expectedRevision:run.revision,nextState:'extraction-loop'}));
     }else assert.equal(run.state,'per-point-quiz-loop');
    }
    assert.equal(run.state,'completed');assert.equal(run.counts.knowledgePoints,selectedCount);assert.equal(run.counts.acceptedQuizzes,selectedCount);
    assert.equal(JSON.parse(db.prepare('SELECT scratchpad_json FROM extraction_scratchpads').get().scratchpad_json).reviewedCandidateCount,candidateCount);
    assert.equal(operations.filter(o=>o==='extract-webpage-facts').length,1);assert.equal(operations.filter(o=>o==='normalize-webpage-claim-boundaries').length,1);
-   assert.equal(textCritics,candidateCount+(batchRetry?3:0),'Saved review chunks are retained; only the unfinished selection chunk is rechecked after an approved retry');assert.equal(batchSelections,1,'Global duplicate selection is retained across commit chunks');assert.equal(pageReads,1);
+   assert.equal(textCritics,candidateCount,'Saved individual reviews survive an approved selection retry');assert.equal(batchSelections,Math.ceil(candidateCount/3),'Every ready chunk passes semantic selection against committed knowledge');assert.equal(pageReads,1);
    assert.equal(queryCounts.length>1,true);assert.equal(Math.max(...queryCounts)<1000,true);
    assert.deepEqual(db.prepare('SELECT point_json FROM extraction_knowledge_points ORDER BY rowid').all().map(row=>JSON.parse(row.point_json).normalizedHash),Array.from({length:candidateCount},(_,index)=>index).filter(selected).map(index=>'ratio-'+index));
    t.diagnostic(JSON.stringify({candidateCount,selectedCount,chunks:queryCounts.length,maximumQueriesPerChunk:Math.max(...queryCounts),pageReads,batchSelections}));

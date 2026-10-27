@@ -113,6 +113,7 @@ import { isInlineLinks } from './inline-links.js';
  *   readonly discoveredUrls?: readonly string[],
  *   readonly acceptedHashes: readonly string[],
  *   readonly reviewedCandidateCount?: number,
+ *   readonly reviewedCandidateHashes?: readonly string[],
  *   readonly similarityEvidence: readonly { readonly candidateHash: string, readonly comparedLocalHash: string, readonly score: number, readonly decision: SimilarityEvidence["decision"] }[],
  *   readonly coverage: readonly string[],
  *   readonly unresolvedGaps: readonly ExtractionGap[],
@@ -191,7 +192,7 @@ import { isInlineLinks } from './inline-links.js';
  *   readonly replan: (command: { readonly previous: ExtractionPlan, readonly observation: PageObservation, readonly scratchpad: ExtractionScratchpad }) => Promise<Result<ExtractionPlan, unknown>>
  * }} ExtractionPlanner
  */
-/** @typedef {{ readonly fetchPage: (command: { readonly url: string, readonly rootUrl: string, readonly plan: ExtractionPlan, readonly attempt?: number }) => Promise<Result<PageObservation, unknown>> }} PageAcquirer */
+/** @typedef {{ readonly fetchPage: (command: { readonly url: string, readonly rootUrl: string, readonly plan: ExtractionPlan, readonly attempt?: number, readonly onDrafts?: (observation:PageObservation)=>Promise<Result<null,unknown>> }) => Promise<Result<PageObservation, unknown>> }} PageAcquirer */
 /** @typedef {{ readonly load: (scope: { readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number }) => Promise<Result<ExtractionScratchpad, unknown>>, readonly save: (scratchpad: ExtractionScratchpad) => Promise<Result<null, unknown>> }} ScratchpadRepository */
 /** @typedef {{ readonly append: (point: KnowledgePoint) => Promise<Result<null, unknown>> }} KnowledgeRepository */
 /** @typedef {{ readonly append: (record: { readonly kind: "durable-fact" | "decision" | "unresolved", readonly retention: "source" | "run", readonly payload: unknown }) => Promise<Result<null, unknown>> }} ExtractionMemory */
@@ -203,12 +204,13 @@ import { isInlineLinks } from './inline-links.js';
  *   readonly planner: ExtractionPlanner,
  *   readonly acquirer: PageAcquirer,
  *   readonly orderedUrls?: readonly string[],
- *   readonly batchAcquirer?: { readonly key: string, readonly maximumBatchSize?: number, readonly fetchBatch: (command: { readonly urls: readonly string[], readonly rootUrl: string, readonly plan: ExtractionPlan, readonly scratchpad: ExtractionScratchpad, readonly attempt?: number }) => Promise<Result<readonly PageObservation[], unknown>> },
+ *   readonly batchAcquirer?: { readonly key: string, readonly maximumBatchSize?: number, readonly fetchBatch: (command: { readonly urls: readonly string[], readonly rootUrl: string, readonly plan: ExtractionPlan, readonly scratchpad: ExtractionScratchpad, readonly attempt?: number, readonly onDrafts?: (observation:PageObservation)=>Promise<Result<null,unknown>> }) => Promise<Result<readonly PageObservation[], unknown>> },
  *   readonly checkRobots?: (targetUrl: string) => Promise<Result<unknown, unknown>>,
  *   readonly scratchpad: ScratchpadRepository,
  *   readonly knowledge: KnowledgeRepository,
  *   readonly reviewer?: { readonly review: (point: KnowledgePoint, observation: PageObservation) => Promise<KnowledgeReviewResult>, readonly reviewBatch?: (points:readonly KnowledgePoint[],observation:PageObservation)=>Promise<readonly KnowledgeReviewResult[]> },
  *   readonly memory?: ExtractionMemory,
+ *   readonly onKnowledge?: () => void,
  *   readonly now: () => string,
  *   readonly nowMs: () => number,
  *   readonly logger: (entry: { readonly event: string, readonly runId?: string, readonly failureKind?: string, readonly diagnosticToken?: string }) => void,
@@ -271,7 +273,7 @@ function validFailedPage(value) { return isRecord(value) && publicHttps(value.ur
 /** @param {unknown} value @returns {value is ExtractionScratchpad} */
 function validScratchpad(value) {
   return isRecord(value) && (value.failedPages === undefined || Array.isArray(value.failedPages) && value.failedPages.every(validFailedPage) && new Set(value.failedPages.map(page => page.url)).size === value.failedPages.length) && (value.retryingFailedPages === undefined || typeof value.retryingFailedPages === "boolean") && (value.retryGeneration === undefined || positiveInteger(value.retryGeneration)) && text(value.ownerId) && text(value.runId) && text(value.sourceId) && positiveInteger(value.sourceRevision) &&
-    Array.isArray(value.processedUrls) && value.processedUrls.every(publicHttps) && (value.processedResponseUrls===undefined||Array.isArray(value.processedResponseUrls)&&value.processedResponseUrls.every(publicHttps)) && (value.processedContentDigests===undefined||Array.isArray(value.processedContentDigests)&&value.processedContentDigests.every(text)) && (value.frontier === undefined || (Array.isArray(value.frontier) && value.frontier.every(publicHttps))) && (value.discoveredUrls === undefined || (Array.isArray(value.discoveredUrls) && value.discoveredUrls.every(publicHttps))) && Array.isArray(value.acceptedHashes) && value.acceptedHashes.every(text) && (value.reviewedCandidateCount === undefined || nonNegativeInteger(value.reviewedCandidateCount)) &&
+    Array.isArray(value.processedUrls) && value.processedUrls.every(publicHttps) && (value.processedResponseUrls===undefined||Array.isArray(value.processedResponseUrls)&&value.processedResponseUrls.every(publicHttps)) && (value.processedContentDigests===undefined||Array.isArray(value.processedContentDigests)&&value.processedContentDigests.every(text)) && (value.frontier === undefined || (Array.isArray(value.frontier) && value.frontier.every(publicHttps))) && (value.discoveredUrls === undefined || (Array.isArray(value.discoveredUrls) && value.discoveredUrls.every(publicHttps))) && Array.isArray(value.acceptedHashes) && value.acceptedHashes.every(text) && (value.reviewedCandidateCount === undefined || nonNegativeInteger(value.reviewedCandidateCount)) && (value.reviewedCandidateHashes === undefined || Array.isArray(value.reviewedCandidateHashes) && value.reviewedCandidateHashes.every(text)) &&
     Array.isArray(value.similarityEvidence) && value.similarityEvidence.every((entry) => isRecord(entry) && text(entry.candidateHash) && text(entry.comparedLocalHash) && typeof entry.score === "number" && entry.score >= 0 && entry.score <= 1 && (entry.decision === "distinct" || entry.decision === "merge" || entry.decision === "ambiguous")) &&
     Array.isArray(value.coverage) && value.coverage.every(text) && Array.isArray(value.unresolvedGaps) && value.unresolvedGaps.every(validGap) && nonNegativeInteger(value.consecutiveNoveltyZero) && (value.pageNotes === undefined || (Array.isArray(value.pageNotes) && value.pageNotes.length <= 100 && value.pageNotes.every(validPageNote))) && positiveInteger(value.revision) &&
     (value.planCheckpoint === undefined || (isRecord(value.planCheckpoint) && validPlan(value.planCheckpoint.plan) && (value.planCheckpoint.batchKey === null || text(value.planCheckpoint.batchKey)) && (value.planCheckpoint.orderedUrls === null || Array.isArray(value.planCheckpoint.orderedUrls) && value.planCheckpoint.orderedUrls.every(publicHttps) && new Set(value.planCheckpoint.orderedUrls).size === value.planCheckpoint.orderedUrls.length) && (value.planCheckpoint.retryGeneration === null || positiveInteger(value.planCheckpoint.retryGeneration)))) &&
@@ -487,6 +489,76 @@ export function createExtractionRunner(dependencies) {
           try { checked = await dependencies.checkRobots(destination.href); } catch (error) { return fail({ kind: "ExtractionAcquisitionFailed", causeKind: "RobotsCheckFailed" }, dependencies, command.runId); }
           if (!checked.ok) return fail(acquisitionFailure(checked.error), dependencies, command.runId);
         }
+        let novel=0;
+        /** @type {{kind:string,technicalAttempts?:number,attempts?:number}|undefined} */ let reviewFailure;
+        /** @type {Result<ExtractionResult,ExtractionFailure>|undefined} */ let earlyResult;
+        /** @param {PageObservation} observation @returns {Promise<Result<ExtractionResult,ExtractionFailure>|null>} */
+        async function publishDrafts(observation) {
+          if(!validObservation(observation)||observation.url!==destination.href||observation.candidates.some(candidate=>candidate.evidenceAnchors.some(anchor=>anchor.url!==(observation.responseUrl??observation.url))||candidate.coverageGoalIds.some(id=>!currentPlan?.coverageGoals.some(goal=>goal.id===id))))return fail({kind:'ExtractionObservationInvalid',field:'drafts'},dependencies,command.runId);
+          if(observation.byteCount>dependencies.policy.maximumPageBytes)return fail({kind:'ExtractionLimitExceeded',limit:'page-bytes'},dependencies,command.runId);
+          if(observation.redirects>dependencies.policy.maximumRedirects)return fail({kind:'ExtractionLimitExceeded',limit:'redirects'},dependencies,command.runId);
+          if(dependencies.policy.maximumKnowledgePointsPerExecution!==undefined&&committedThisExecution>=dependencies.policy.maximumKnowledgePointsPerExecution)return {ok:true,value:freeze({state:'awaiting-time-limit-decision',scratchpad,knowledgePointCount:scratchpad.acceptedHashes.length,pagesProcessed,stopReason:'paused'})};
+          const candidates = scratchpad.processedContentDigests?.includes(observation.contentDigest??'') ? [] : observation.candidates.filter((candidate,index,all)=>!scratchpad.acceptedHashes.includes(candidate.normalizedHash)&&!scratchpad.reviewedCandidateHashes?.includes(candidate.normalizedHash)&&all.findIndex(other=>other.normalizedHash===candidate.normalizedHash)===index);
+          /** @param {KnowledgeCandidate} candidate */
+          const toPoint = candidate => /** @type {KnowledgePoint} */ (freeze({ id: `knowledge:${command.sourceId}:${command.sourceRevision}:${candidate.normalizedHash}`, sourceId: command.sourceId, sourceRevision: command.sourceRevision, summary: candidate.summary, normalizedHash: candidate.normalizedHash, evidenceAnchors: freeze(candidate.evidenceAnchors.map((anchor) => freeze({ ...anchor }))), coverageGoalIds: freeze([...candidate.coverageGoalIds]), mediaCandidates: freeze([...candidate.mediaCandidates]), attribution: freeze({ sourceUrl: observation.responseUrl??observation.url }), extractionVersion }));
+          /** @type {readonly KnowledgeReviewResult[]|undefined} */ let batchReviews;
+          if (dependencies.reviewer?.reviewBatch !== undefined) {
+            try {batchReviews = await dependencies.reviewer.reviewBatch(candidates.map(toPoint),observation);}
+            catch {return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewFailed"},dependencies,command.runId);}
+            if (!Array.isArray(batchReviews) || batchReviews.length !== candidates.length) return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewOutputInvalid"},dependencies,command.runId);
+            if(batchReviews.some(review=>!review.ok&&review.error.kind==='KnowledgeReviewChunkPending')){
+              const failed=batchReviews.find(review=>!review.ok&&review.error.kind!=='KnowledgeReviewChunkPending');
+              if(failed&&!failed.ok)return fail({kind:'KnowledgePersistenceFailed',causeKind:failed.error.kind},dependencies,command.runId);
+            }
+          }
+          for (const [candidateIndex,candidate] of candidates.entries()) {
+            if (scratchpad.acceptedHashes.includes(candidate.normalizedHash)) continue;
+            if (dependencies.reviewer === undefined && candidate.similarity?.decision === "ambiguous") return fail({ kind: "KnowledgeDuplicateAmbiguous" }, dependencies, command.runId);
+            if (candidate.similarity !== undefined) scratchpad = cloneScratchpad({ ...scratchpad, similarityEvidence: [...scratchpad.similarityEvidence, { candidateHash: candidate.normalizedHash, comparedLocalHash: candidate.similarity.comparedLocalHash, score: candidate.similarity.score, decision: candidate.similarity.decision }] });
+            if (dependencies.reviewer === undefined && candidate.similarity?.decision === "merge") continue;
+            let point = toPoint(candidate);
+            if (dependencies.reviewer !== undefined) {
+              let reviewed;
+              try { reviewed = batchReviews === undefined ? await dependencies.reviewer.review(point, observation) : batchReviews[candidateIndex]; } catch (error) { return fail({ kind: "KnowledgePersistenceFailed", causeKind: "KnowledgeReviewFailed" }, dependencies, command.runId); }
+              if (!reviewed.ok) {
+                if(reviewed.error.kind==='KnowledgeReviewChunkPending')continue;
+                if (interruptedUnitCause(reviewed.error) === undefined && !pageLocalFailure(reviewed.error.kind, reviewed.error)) return fail({kind:"KnowledgePersistenceFailed",causeKind:reviewed.error.kind},dependencies,command.runId);
+                reviewFailure = reviewed.error;
+                break;
+              }
+              if (reviewed.value === null){
+                scratchpad=cloneScratchpad({...scratchpad,reviewedCandidateCount:(scratchpad.reviewedCandidateCount??0)+1,reviewedCandidateHashes:[...(scratchpad.reviewedCandidateHashes??[]),candidate.normalizedHash],revision:scratchpad.revision+1});
+                try{const saved=await dependencies.scratchpad.save(scratchpad);if(!saved.ok)return fail({kind:'ScratchpadPersistenceFailed'},dependencies,command.runId);}catch{return fail({kind:'ScratchpadPersistenceFailed'},dependencies,command.runId);}
+                continue;
+              }
+              point = reviewed.value;
+              if (!validCandidate({summary:point.summary,normalizedHash:point.normalizedHash,evidenceAnchors:point.evidenceAnchors,coverageGoalIds:point.coverageGoalIds,mediaCandidates:point.mediaCandidates}) || point.sourceId !== command.sourceId || point.sourceRevision !== command.sourceRevision || point.evidenceAnchors.some(anchor=>!candidate.evidenceAnchors.some(original=>original.url===anchor.url&&original.selector===anchor.selector&&original.blockId===anchor.blockId&&original.quoteDigest===anchor.quoteDigest&&original.quote===anchor.quote&&JSON.stringify(original.inlineLinks)===JSON.stringify(anchor.inlineLinks))) || point.coverageGoalIds.some(id=>!candidate.coverageGoalIds.includes(id)) || point.attribution.sourceUrl !== (observation.responseUrl??observation.url)) return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewOutputInvalid"},dependencies,command.runId);
+            }
+            if(scratchpad.acceptedHashes.includes(point.normalizedHash))continue;
+            if(dependencies.policy.maximumKnowledgePointsPerExecution!==undefined&&committedThisExecution>=dependencies.policy.maximumKnowledgePointsPerExecution)return {ok:true,value:freeze({state:'awaiting-time-limit-decision',scratchpad,knowledgePointCount:scratchpad.acceptedHashes.length,pagesProcessed,stopReason:'paused'})};
+            if(dependencies.reviewer!==undefined)scratchpad=cloneScratchpad({...scratchpad,reviewedCandidateCount:(scratchpad.reviewedCandidateCount??0)+1});
+            let appended;
+            try { appended = await dependencies.knowledge.append(point); } catch (error) { const causeKind = isRecord(error) && text(error.kind) ? error.kind : "KnowledgeRepositoryRejected"; return fail({ kind: "KnowledgePersistenceFailed", causeKind }, dependencies, command.runId); }
+            if (!appended.ok) { const causeKind = isRecord(appended.error) && text(appended.error.kind) ? appended.error.kind : undefined; return fail({ kind: "KnowledgePersistenceFailed", ...(causeKind === undefined || causeKind === "KnowledgePersistenceFailed" ? {} : { causeKind }) }, dependencies, command.runId); }
+            const acceptedMemory = await remember(dependencies.memory, "durable-fact", "source", { phase: "knowledge-accepted", knowledgeId: point.id, normalizedHash: point.normalizedHash, evidenceDigests: point.evidenceAnchors.flatMap((anchor) => anchor.quoteDigest === undefined ? [] : [anchor.quoteDigest]).slice(0, 50), coverageGoalIds: point.coverageGoalIds.slice(0, 50), sourceUrl: observation.url }, dependencies, command.runId);
+            if (!acceptedMemory.ok) return acceptedMemory;
+            scratchpad = cloneScratchpad({ ...scratchpad, acceptedHashes: [...new Set([...scratchpad.acceptedHashes, point.normalizedHash])], reviewedCandidateHashes:[...new Set([...(scratchpad.reviewedCandidateHashes??[]),candidate.normalizedHash])], coverage: [...new Set([...scratchpad.coverage, ...point.coverageGoalIds])], revision: scratchpad.revision + 1 });
+            try { const saved = await dependencies.scratchpad.save(scratchpad); if (!saved.ok) return fail({ kind: "ScratchpadPersistenceFailed" }, dependencies, command.runId); }
+            catch (error) { return fail({ kind: "ScratchpadPersistenceFailed" }, dependencies, command.runId); }
+            novel += 1;
+            committedThisExecution++;
+            dependencies.onKnowledge?.();
+          }
+          // Ready points are durable; pending reviews cannot complete this page or its coverage.
+          if(reviewFailure===undefined&&batchReviews?.some(review=>!review.ok&&review.error.kind==='KnowledgeReviewChunkPending'))return {ok:true,value:freeze({state:'awaiting-time-limit-decision',scratchpad,knowledgePointCount:scratchpad.acceptedHashes.length,pagesProcessed,stopReason:'paused'})};
+          return null;
+        }
+        /** @param {PageObservation} observation @returns {Promise<Result<null,unknown>>} */
+        const onDrafts=async observation=>{
+          const result=await publishDrafts(observation);
+          if(result!==null)earlyResult=result;
+          return result!==null&&!result.ok?result:{ok:true,value:null};
+        };
         if (dependencies.batchAcquirer !== undefined && scratchpad.pendingBatch === undefined) {
           const urls = currentPlan.frontier.filter((url) => !scratchpad.processedUrls.includes(url) && !scratchpad.processedResponseUrls?.includes(url) && !scratchpad.failedPages?.some(page => page.url === url)).slice(0, Math.min(singleBatchRetries.has(nextUrl) ? 1 : dependencies.batchAcquirer.maximumBatchSize ?? 5, dependencies.policy.maximumPages - attemptedPages));
           for (const url of urls) {
@@ -500,7 +572,7 @@ export function createExtractionRunner(dependencies) {
           let batch;
           let attempt = singleBatchRetries.get(nextUrl) ?? 1;
           do {
-            try { batch = await dependencies.batchAcquirer.fetchBatch({ urls, rootUrl: root.href, plan: currentPlan, scratchpad, attempt }); } catch (error) { return fail({ kind: "ExtractionAcquisitionFailed" }, dependencies, command.runId); }
+            try { batch = await dependencies.batchAcquirer.fetchBatch({ urls, rootUrl: root.href, plan: currentPlan, scratchpad, attempt,onDrafts }); } catch (error) { return fail({ kind: "ExtractionAcquisitionFailed" }, dependencies, command.runId); }
             if (batch.ok || !retryablePageFailure(acquisitionFailureKind(batch.error), batch.error) || attempt === 4 || urls.length > 1) break;
             if (dependencies.nowMs() >= command.deadlineAtMs) return { ok: true, value: freeze({ state: "awaiting-time-limit-decision", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "time-limit" }) };
             attempt++;
@@ -530,7 +602,7 @@ export function createExtractionRunner(dependencies) {
         let acquired;
         let attempt = 1;
         do {
-          try { acquired = scratchpad.pendingBatch === undefined ? await dependencies.acquirer.fetchPage({ url: destination.href, rootUrl: root.href, plan: currentPlan, attempt }) : { ok: true, value: scratchpad.pendingBatch.observations[0] }; } catch (error) { return fail({ kind: "ExtractionAcquisitionFailed" }, dependencies, command.runId); }
+          try { acquired = scratchpad.pendingBatch === undefined ? await dependencies.acquirer.fetchPage({ url: destination.href, rootUrl: root.href, plan: currentPlan, attempt,onDrafts }) : { ok: true, value: scratchpad.pendingBatch.observations[0] }; } catch (error) { return fail({ kind: "ExtractionAcquisitionFailed" }, dependencies, command.runId); }
           if (acquired.ok || !retryablePageFailure(acquisitionFailureKind(acquired.error), acquired.error) || attempt === 4) break;
           if (dependencies.nowMs() >= command.deadlineAtMs) return { ok: true, value: freeze({ state: "awaiting-time-limit-decision", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "time-limit" }) };
           attempt++;
@@ -557,56 +629,9 @@ export function createExtractionRunner(dependencies) {
         const pageNote = freeze({ url: observation.url, title: observation.title, note: (text(observation.notes) ? observation.notes : `Observed ${observation.candidates.length} candidate knowledge points and ${observation.links.length} same-origin links.`).slice(0, 2_000), observedAt: observation.observedAt, linkCount: observation.links.length, candidateCount: observation.candidates.length });
         const pageMemory = await remember(dependencies.memory, "durable-fact", "source", { phase: "page-observed", url: observation.url, title: observation.title, note: pageNote.note, observedAt: observation.observedAt, byteCount: observation.byteCount, redirects: observation.redirects, links: observation.links.slice(0, 50), candidateCount: observation.candidates.length }, dependencies, command.runId);
         if (!pageMemory.ok) return pageMemory;
-        let novel = 0;
-        let reviewFailure;
-        let droppedReviews=0;
-        const candidates = scratchpad.processedContentDigests?.includes(observation.contentDigest??'') ? [] : observation.candidates.filter((candidate,index,all)=>!scratchpad.acceptedHashes.includes(candidate.normalizedHash)&&all.findIndex(other=>other.normalizedHash===candidate.normalizedHash)===index);
-        /** @param {KnowledgeCandidate} candidate */
-        const toPoint = candidate => /** @type {KnowledgePoint} */ (freeze({ id: `knowledge:${command.sourceId}:${command.sourceRevision}:${candidate.normalizedHash}`, sourceId: command.sourceId, sourceRevision: command.sourceRevision, summary: candidate.summary, normalizedHash: candidate.normalizedHash, evidenceAnchors: freeze(candidate.evidenceAnchors.map((anchor) => freeze({ ...anchor }))), coverageGoalIds: freeze([...candidate.coverageGoalIds]), mediaCandidates: freeze([...candidate.mediaCandidates]), attribution: freeze({ sourceUrl: observation.responseUrl??observation.url }), extractionVersion }));
-        /** @type {readonly KnowledgeReviewResult[]|undefined} */ let batchReviews;
-        if (dependencies.reviewer?.reviewBatch !== undefined) {
-          try {batchReviews = await dependencies.reviewer.reviewBatch(candidates.map(toPoint),observation);}
-          catch {return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewFailed"},dependencies,command.runId);}
-          if (!Array.isArray(batchReviews) || batchReviews.length !== candidates.length) return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewOutputInvalid"},dependencies,command.runId);
-          if(batchReviews.some(review=>!review.ok&&review.error.kind==='KnowledgeReviewChunkPending')) {
-            const failed=batchReviews.find(review=>!review.ok&&review.error.kind!=='KnowledgeReviewChunkPending');
-            if(failed&&!failed.ok)return fail({kind:'KnowledgePersistenceFailed',causeKind:failed.error.kind},dependencies,command.runId);
-            return {ok:true,value:freeze({state:'awaiting-time-limit-decision',scratchpad,knowledgePointCount:scratchpad.acceptedHashes.length,pagesProcessed,stopReason:'paused'})};
-          }
-        }
-        for (const [candidateIndex,candidate] of candidates.entries()) {
-          if (scratchpad.acceptedHashes.includes(candidate.normalizedHash)) continue;
-          if (dependencies.reviewer === undefined && candidate.similarity?.decision === "ambiguous") return fail({ kind: "KnowledgeDuplicateAmbiguous" }, dependencies, command.runId);
-          if (candidate.similarity !== undefined) scratchpad = cloneScratchpad({ ...scratchpad, similarityEvidence: [...scratchpad.similarityEvidence, { candidateHash: candidate.normalizedHash, comparedLocalHash: candidate.similarity.comparedLocalHash, score: candidate.similarity.score, decision: candidate.similarity.decision }] });
-          if (dependencies.reviewer === undefined && candidate.similarity?.decision === "merge") continue;
-          let point = toPoint(candidate);
-          if (dependencies.reviewer !== undefined) {
-            let reviewed;
-            try { reviewed = batchReviews === undefined ? await dependencies.reviewer.review(point, observation) : batchReviews[candidateIndex]; } catch (error) { return fail({ kind: "KnowledgePersistenceFailed", causeKind: "KnowledgeReviewFailed" }, dependencies, command.runId); }
-            if (!reviewed.ok) {
-              if (interruptedUnitCause(reviewed.error) === undefined && !pageLocalFailure(reviewed.error.kind, reviewed.error)) return fail({kind:"KnowledgePersistenceFailed",causeKind:reviewed.error.kind},dependencies,command.runId);
-              reviewFailure = reviewed.error;
-              break;
-            }
-            if (reviewed.value === null){droppedReviews++;continue;}
-            point = reviewed.value;
-            if (!validCandidate({summary:point.summary,normalizedHash:point.normalizedHash,evidenceAnchors:point.evidenceAnchors,coverageGoalIds:point.coverageGoalIds,mediaCandidates:point.mediaCandidates}) || point.sourceId !== command.sourceId || point.sourceRevision !== command.sourceRevision || point.evidenceAnchors.some(anchor=>!candidate.evidenceAnchors.some(original=>original.url===anchor.url&&original.selector===anchor.selector&&original.blockId===anchor.blockId&&original.quoteDigest===anchor.quoteDigest&&original.quote===anchor.quote&&JSON.stringify(original.inlineLinks)===JSON.stringify(anchor.inlineLinks))) || point.coverageGoalIds.some(id=>!candidate.coverageGoalIds.includes(id)) || point.attribution.sourceUrl !== (observation.responseUrl??observation.url)) return fail({kind:"KnowledgePersistenceFailed",causeKind:"KnowledgeReviewOutputInvalid"},dependencies,command.runId);
-          }
-          if(scratchpad.acceptedHashes.includes(point.normalizedHash))continue;
-          if(dependencies.policy.maximumKnowledgePointsPerExecution!==undefined&&committedThisExecution>=dependencies.policy.maximumKnowledgePointsPerExecution)return {ok:true,value:freeze({state:'awaiting-time-limit-decision',scratchpad,knowledgePointCount:scratchpad.acceptedHashes.length,pagesProcessed,stopReason:'paused'})};
-          if(dependencies.reviewer!==undefined)scratchpad=cloneScratchpad({...scratchpad,reviewedCandidateCount:(scratchpad.reviewedCandidateCount??0)+1});
-          let appended;
-          try { appended = await dependencies.knowledge.append(point); } catch (error) { const causeKind = isRecord(error) && text(error.kind) ? error.kind : "KnowledgeRepositoryRejected"; return fail({ kind: "KnowledgePersistenceFailed", causeKind }, dependencies, command.runId); }
-          if (!appended.ok) { const causeKind = isRecord(appended.error) && text(appended.error.kind) ? appended.error.kind : undefined; return fail({ kind: "KnowledgePersistenceFailed", ...(causeKind === undefined || causeKind === "KnowledgePersistenceFailed" ? {} : { causeKind }) }, dependencies, command.runId); }
-          const acceptedMemory = await remember(dependencies.memory, "durable-fact", "source", { phase: "knowledge-accepted", knowledgeId: point.id, normalizedHash: point.normalizedHash, evidenceDigests: point.evidenceAnchors.flatMap((anchor) => anchor.quoteDigest === undefined ? [] : [anchor.quoteDigest]).slice(0, 50), coverageGoalIds: point.coverageGoalIds.slice(0, 50), sourceUrl: observation.url }, dependencies, command.runId);
-          if (!acceptedMemory.ok) return acceptedMemory;
-          scratchpad = cloneScratchpad({ ...scratchpad, acceptedHashes: [...new Set([...scratchpad.acceptedHashes, point.normalizedHash])], coverage: [...new Set([...scratchpad.coverage, ...point.coverageGoalIds])], revision: scratchpad.revision + 1 });
-          try { const saved = await dependencies.scratchpad.save(scratchpad); if (!saved.ok) return fail({ kind: "ScratchpadPersistenceFailed" }, dependencies, command.runId); }
-          catch (error) { return fail({ kind: "ScratchpadPersistenceFailed" }, dependencies, command.runId); }
-          novel += 1;
-          committedThisExecution++;
-        }
-        scratchpad=cloneScratchpad({...scratchpad,reviewedCandidateCount:(scratchpad.reviewedCandidateCount??0)+droppedReviews});
+        if(earlyResult!==undefined)return earlyResult;
+        const published=await publishDrafts(observation);
+        if(published!==null)return published;
         if (reviewFailure !== undefined) {
           const interruption = interruptedUnitCause(reviewFailure);
           const recorded = await recordFailedPage(observation.url, interruption === undefined ? reviewFailure.kind : "WorkflowProcessingInterrupted", positiveInteger(reviewFailure.technicalAttempts) ? reviewFailure.technicalAttempts : positiveInteger(reviewFailure.attempts) ? reviewFailure.attempts : reviewFailure.kind === "KnowledgeReviewOutputInvalid" ? 2 : 1, observation, interruption);

@@ -67,7 +67,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const qualityReviews = [];
     let activeParallelReviews=0,maximumParallelReviews=0,parallelSelections=0;
     let captionCalls=0, decisionCalls=0, decisionRefused=false;
-    let activeDrafts=0,maximumDrafts=0,draftOrdinal=0,reviewOverlappedDraft=false;
+    let activeDrafts=0,maximumDrafts=0,reviewOverlappedDraft=false;
     let allowQuizRecovery=false,failedQuizReviews=0,recoveredDrafts=0;
     let modelCalls = 0; let invalidPairedDraftInjected = false, pairedFeedbackSeen = false;
     const transport = async (_url, init) => {
@@ -193,7 +193,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       if(body.response_format?.json_schema?.name === "paired_quiz_v4") {
         if(task.knowledge.summary==='Parallel fixture relationship 0')recoveredDrafts++;
         activeDrafts++;maximumDrafts=Math.max(maximumDrafts,activeDrafts);
-        try { await new Promise(resolve=>setTimeout(resolve,20*(++draftOrdinal%3+1))); }
+        try { await new Promise(resolve=>setTimeout(resolve,activeDrafts===1?5:80)); }
         finally {activeDrafts--;}
         if (!invalidPairedDraftInjected) { invalidPairedDraftInjected=true; output.fillBlank.blanks[0].canonicalAnswer="other";output.fillBlank.blanks[0].acceptedAnswers=["other","ＯＴＨＥＲ"]; }
         else if(task.feedback?.includes("Paired-quiz validation issues")) { pairedFeedbackSeen=true;assert.match(task.feedback,/canonicalAnswer:/);assert.match(task.feedback,/acceptedAnswers\[0\]:/);assert.match(task.feedback,/NFKC-equivalent/);assert.equal(task.attempt,1,"Schema correction retains its quality attempt");assert(task.sourceEvidence.sections.length>0); }
@@ -202,7 +202,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     };
     const forbidden = async () => { assert.fail("Uploads must not use browser acquisition."); };
     let sawInterruption = false;
-    const quizChunkSizes=[];
+    const quizChunkSizes=[];let firstQuizPages;
     const extractionClock=run.extractionDeadlineAt;
     for (let step = 0; step < 16 && run.state !== "completed"; step++) {
       if (run.state === "awaiting-time-limit-decision") run = unwrap(await service.advance({ ownerId, runId, expectedRevision: run.revision, nextState: "extraction-loop" }));
@@ -226,7 +226,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       run = unwrap(await repository.findById(ownerId, runId));
       const afterQuiz=db.prepare("SELECT COUNT(*) count FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'quiz-point-completed:%' AND status='completed'").get(runId).count;
       assert(maximumDrafts<=3,"Durable chunks preserve the three-draft concurrency ceiling");
-      if(afterQuiz>beforeQuiz)quizChunkSizes.push(afterQuiz-beforeQuiz);
+      if(afterQuiz>beforeQuiz){quizChunkSizes.push(afterQuiz-beforeQuiz);firstQuizPages??=run.counts.pages;}
       assert.equal(run.extractionDeadlineAt,extractionClock);
     }
     assert.equal(sawInterruption, true);assert.equal(pairedFeedbackSeen,true);
@@ -235,15 +235,15 @@ test("production upload runtime resumes text batches and processes selected PDF 
     assert.equal(run.counts.pages, 7);
     assert.equal(run.counts.knowledgePoints, 6);
     assert.equal(run.counts.acceptedQuizzes, 6);
-    assert.deepEqual(quizChunkSizes,[3,3],"Checkpoint each three-draft chunk before starting more work");
+    assert(quizChunkSizes.every(size=>size>=1&&size<=3));assert.equal(quizChunkSizes.reduce((sum,size)=>sum+size,0),6);assert(firstQuizPages<sections.length,"The first usable quiz must not wait for every source section");
     assert.equal([...evidenceReads.entries()].filter(([key])=>key.startsWith(runId+':')).length,6);
     assert([...evidenceReads.entries()].filter(([key])=>key.startsWith(runId+':')).every(([,count])=>count===1),'Generation, schema repair and review reuse immutable evidence');
     assert(metricLogs.some(e=>e.event==='workflow-first-usable-quiz'&&e.runId===runId));
     assert(metricLogs.some(e=>e.event==='workflow-completion'&&e.runId===runId&&e.count===6));
     assert(metricLogs.some(e=>e.event==='quiz-stage-wait'));
     assert(metricLogs.some(e=>e.event==='knowledge-model-usage'&&e.runId===runId&&e.costNanodollars===null));
-    assert.equal(maximumDrafts,3);assert.equal(activeDrafts,0);assert.equal(reviewOverlappedDraft,true);
-    assert.equal(db.prepare("SELECT COUNT(*) count FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'quiz-batch-classification:%' AND status='completed'").get(runId).count,1);
+    assert(maximumDrafts>=1&&maximumDrafts<=3);assert.equal(activeDrafts,0);
+    assert.equal(db.prepare("SELECT COUNT(*) count FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'quiz-batch-classification:%' AND status='completed'").get(runId).count,2);
     const scratchpad = JSON.parse(db.prepare("SELECT scratchpad_json FROM extraction_scratchpads").get().scratchpad_json);
     assert.equal(scratchpad.pendingBatch, undefined);
     assert.equal(scratchpad.processedUrls.length, 7);
@@ -369,10 +369,12 @@ test("production upload runtime resumes text batches and processes selected PDF 
     parallelRun=unwrap(await parallelService.attachMaterial({ownerId,runId:parallelRunId,materialId:'parallel-material'}));
     db.prepare("INSERT INTO library_sources (owner_id,source_id,submitted_url,canonical_url,title,description,adapter_json,identity_evidence_json,state,approved_at,updated_at,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(ownerId,parallelSourceId,parallelUrl,parallelUrl,'Parallel source','Offline concurrency fixture',JSON.stringify({kind:'private-document'}),'[]','active',clock(),clock(),1);
     for(let step=0;step<4&&parallelRun.state!=='completed';step++){
+      if(parallelRun.state==='awaiting-time-limit-decision')parallelRun=unwrap(await parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:parallelRun.revision,nextState:'extraction-loop'}));
       const runtime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,transition:({run:current,nextState,...rest})=>parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:current.revision,nextState,...rest})});
       unwrap(await runtime.execute(parallelRun));parallelRun=unwrap(await repository.findById(ownerId,parallelRunId));
     }
     assert.equal(parallelRun.counts.knowledgePoints,3);
+    assert.equal(reviewOverlappedDraft,true,'The multi-point fixture overlaps quiz review with a later pending draft');
     assert.equal(maximumParallelReviews,3);assert.equal(activeParallelReviews,0);assert.equal(parallelSelections,1);
 
     assert.equal(parallelRun.state,'completed');assert.equal(parallelRun.failureKind,'WorkflowQuizItemsFailed');
