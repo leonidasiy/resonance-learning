@@ -451,6 +451,20 @@ export function createLibraryPage(dependencies) {
     rerender();
   }
 
+  /** @param {string|null} runId @param {number} expectedRevision */
+  async function dismissFailures(runId,expectedRevision) {
+    const status=workflowStatuses.find(candidate=>candidate.run?.runId===runId);
+    if(!status?.run||status.run.state!=="completed"||status.reasonCode!=="partial-failure"||pendingSourceId!==null)return;
+    pendingSourceId=status.sourceId;
+    stopWorkflowStatusPolling();rerender();
+    const result=await gateway.dismissWorkflowFailures({runId:status.run.runId,expectedRevision,idempotencyKey:`workflow-dismiss:${createId()}`});
+    pendingSourceId=null;
+    if(result.ok)onNotice(libraryCopy(27));
+    else onError(friendly(result.error));
+    await loadWorkflowStatuses(true);
+    rerender();
+  }
+
   /** @param {string|null} runId @param {number} expectedRevision @param {boolean} [cancel] @param {boolean} [approved] @param {boolean} [quizzes] */
   async function retryWorkflow(runId, expectedRevision, cancel=false, approved=false, quizzes=false) {
     if (
@@ -740,6 +754,9 @@ export function createLibraryPage(dependencies) {
         }
       })
     );
+    root.querySelectorAll("[data-library-workflow-dismiss]").forEach(element=>element.addEventListener("click",()=>{
+      void dismissFailures(element.getAttribute("data-library-workflow-dismiss"),Number(element.getAttribute("data-library-workflow-dismiss-revision")));
+    }));
     const sentinel = root.querySelector("[data-library-sentinel]");
     if (sentinel !== null && nextCursor !== null && read === null) {
       observer = createObserver(() => void load(false));

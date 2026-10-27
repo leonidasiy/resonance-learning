@@ -484,3 +484,29 @@ Deno.test('platform crash projection is read-only, preserves revision, and does 
  const unavailable=await projectKnowledgeWorkflowExecution(run,{...binding,get:forbidden});assertEquals(unavailable.ok,false);
  const terminal={...run,state:/** @type {const} */('completed')};const done=await projectKnowledgeWorkflowExecution(terminal,binding);if(!done.ok)throw new Error(done.error.kind);assertEquals(done.value,terminal);assertEquals(reads,2);
 });
+
+Deno.test("dismissing completed failures is owner/revision scoped, replayable and preserves content counts",async()=>{
+ for(const failureKind of ["WorkflowPagesFailed","WorkflowQuizItemsFailed"]){
+  let cleanups=0;
+  const f=setup({abandonRun:async()=>{cleanups++;return {ok:true,value:null};},revokeSource:async()=>{cleanups++;return {ok:true,value:null};}});
+  const {run}=await createRun(f.service);
+  const command={ownerId:run.ownerId,runId:run.runId,expectedRevision:6,action:"dismiss-failures",idempotencyKey:"dismiss"};
+  f.runs[0]={...run,state:"completed",revision:6,failureKind,counts:{pages:2,knowledgePoints:3,acceptedQuizzes:2,pendingQuizzes:1}};
+  for(const {change,kind} of [{change:{ownerId:"other-owner"},kind:"WorkflowNotFound"},{change:{expectedRevision:5},kind:"WorkflowControlStale"}]){
+   const result=await f.service.control({...command,...change});assertEquals(result.ok,false);if(!result.ok)assertEquals(result.error.kind,kind);
+  }
+  const original=f.runs[0];
+  const dismissed=await f.service.control(command);if(!dismissed.ok)throw new Error(dismissed.error.kind);
+  assertEquals(dismissed.value.state,"completed");assertEquals(dismissed.value.failureKind,"WorkflowFailedItemsDismissed");assertEquals(dismissed.value.revision,7);
+  assertEquals(JSON.stringify(dismissed.value.counts),JSON.stringify(original.counts));assertEquals(dismissed.value.sourceId,run.sourceId);
+  const replay=await f.service.control(command);if(!replay.ok)throw new Error(replay.error.kind);assertEquals(replay.value.revision,7);
+  assertEquals((await f.service.ensureReuse(command)).ok,true);assertEquals(f.manifests.length,0);assertEquals(cleanups,0);
+  for(const action of ["resume","retry-quizzes","dismiss-failures"]){
+   const result=await f.service.control({...command,expectedRevision:7,action,idempotencyKey:action});assertEquals(result.ok,false);if(!result.ok)assertEquals(result.error.kind,"WorkflowControlInvalid");
+  }
+  for(const state of /** @type {const} */(["extraction-loop","per-point-quiz-loop","paused","completed"])){
+   f.runs[0]={...run,state,revision:6,failureKind:state==="completed"?null:failureKind};
+   const result=await f.service.control({...command,idempotencyKey:`invalid-${state}`});assertEquals(result.ok,false);if(!result.ok)assertEquals(result.error.kind,"WorkflowControlInvalid");
+  }
+ }
+});

@@ -77,7 +77,7 @@ import { validateSourceRightsProfile } from "../source-library/rights-profile.js
  *   readonly ownerId: string,
  *   readonly runId: string,
  *   readonly expectedRevision: number,
- *   readonly action: "stop" | "resume" | "generate" | "abandon" | "retry-quizzes",
+ *   readonly action: "stop" | "resume" | "generate" | "abandon" | "retry-quizzes" | "dismiss-failures",
  *   readonly idempotencyKey: string
  * }} WorkflowControlCommand
  */
@@ -205,7 +205,7 @@ export const isWorkflowRobotsEvidence = isRobotsEvidence;
 function isControlCommand(value) {
   return isRecord(value) && isNonEmptyText(value.ownerId) && isNonEmptyText(value.runId) &&
     isPositiveInteger(value.expectedRevision) &&
-    (value.action === "stop" || value.action === "resume" || value.action === "generate" || value.action === "abandon" || value.action === "retry-quizzes") &&
+    (value.action === "stop" || value.action === "resume" || value.action === "generate" || value.action === "abandon" || value.action === "retry-quizzes" || value.action === "dismiss-failures") &&
     isNonEmptyText(value.idempotencyKey);
 }
 
@@ -226,6 +226,7 @@ function cloneRun(run) {
 
 /** @param {KnowledgeWorkflowRun} run @param {WorkflowControlCommand["action"]} action @param {boolean} deadlineReached @returns {boolean} */
 function isAllowedControl(run, action, deadlineReached) {
+  if (action === "dismiss-failures") return run.state === "completed" && ["WorkflowPagesFailed","WorkflowQuizItemsFailed"].includes(run.failureKind??"");
   if (action === "retry-quizzes") return run.state === "completed" && run.failureKind === "WorkflowQuizItemsFailed";
   if (action === "stop") return run.state === "extraction-loop" && !deadlineReached;
   if (action === "resume") return run.state === "paused" || run.state === "retryable-failure" || run.state === "awaiting-time-limit-decision" || (run.state === "completed" && ["WorkflowPagesFailed","WorkflowQuizItemsFailed"].includes(run.failureKind??"")) || (run.state === "extraction-loop" && deadlineReached);
@@ -235,6 +236,7 @@ function isAllowedControl(run, action, deadlineReached) {
 
 /** @param {KnowledgeWorkflowRun} run @param {WorkflowControlCommand["action"]} action @param {string} now @param {boolean} deadlineReached @param {number} envelopeMs @returns {KnowledgeWorkflowRun} */
 function nextForControl(run, action, now, deadlineReached, envelopeMs) {
+  if (action === "dismiss-failures") return cloneRun({...run,revision:run.revision+1,failureKind:"WorkflowFailedItemsDismissed",updatedAt:now});
   const state = action === "retry-quizzes" ? "per-point-quiz-loop" : action === "stop"
     ? "paused"
     : action === "resume"
@@ -279,7 +281,7 @@ function isAllowedTransition(current, next) {
 /** @param {KnowledgeWorkflowRun} run @param {WorkflowRepository} repository @returns {Promise<Result<KnowledgeWorkflowRun, WorkflowFailure>>} */
 async function persistReuse(run, repository) {
   // Personal processing grants are owner-scoped, not permission for global reuse.
-  if (run.state !== "completed" || ["WorkflowPagesFailed","WorkflowQuizItemsFailed"].includes(run.failureKind ?? "") || run.materialId != null || run.userAuthorization != null || typeof repository.markReuse !== "function") return { ok: true, value: run };
+  if (run.state !== "completed" || ["WorkflowPagesFailed","WorkflowQuizItemsFailed","WorkflowFailedItemsDismissed"].includes(run.failureKind ?? "") || run.materialId != null || run.userAuthorization != null || typeof repository.markReuse !== "function") return { ok: true, value: run };
   const marked = await repository.markReuse({ canonicalSourceIdentity: run.canonicalSourceIdentity, sourceRevision: run.sourceRevision, contentSignature: run.contentSignature, configDigests: run.configDigests, counts: run.counts, createdAt: run.createdAt, updatedAt: run.updatedAt });
   return marked.ok ? { ok: true, value: run } : marked;
 }

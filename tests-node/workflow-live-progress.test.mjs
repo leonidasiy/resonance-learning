@@ -121,3 +121,30 @@ test('failed units survive durable progress projection and reject invalid public
   assert.equal(parseWorkflowProgress({...progress,failedItems:[...progress.failedItems,...progress.failedItems]}),null);
  }finally{f.close();}
 });
+
+test('dismissed page and quiz failures stay cleared after durable reload without deleting learned content or accounting',async()=>{
+ const f=await fixture();try{
+  await publish(f,f.run,point('saved'));
+  unwrap(await f.content.appendKnowledgePoint(point('failed-quiz'),'owner',f.run.runId,f.now()));
+  const scratchpad=unwrap(await f.content.loadScratchpad(f.run));
+  unwrap(await f.content.saveScratchpad({...scratchpad,revision:scratchpad.revision+1,failedPages:[{url:'https://example.test/missing',title:'Missing page',failureKind:'KnowledgePageFetchFailed',attempts:2,failedAt:f.now()}]},f.now()));
+  const failedQuiz={knowledgeId:'failed-quiz',summary:'A saved point without a quiz.',failureKind:'KnowledgeModelUnavailable',attempts:4,failedAt:f.now(),generation:0,generatorGeneration:0,phase:'generation'};
+  f.db.prepare("INSERT INTO knowledge_workflow_stages(owner_id,run_id,stage_key,input_digest,status,result_json,created_at,completed_at) VALUES(?,?,?,'synthetic','completed',?,?,?)").run('owner',f.run.runId,'quiz-point-failed:failed-quiz:0',JSON.stringify({ok:true,value:failedQuiz}),f.now(),f.now());
+  const completed=unwrap(await f.repo.update({ownerId:'owner',runId:f.run.runId,expectedRevision:1,next:{...f.run,state:'completed',revision:2,failureKind:'WorkflowQuizItemsFailed',counts:{pages:1,knowledgePoints:2,acceptedQuizzes:1,pendingQuizzes:0}}}));
+  const before=unwrap(await f.progress.read(completed));assert.equal(before.failedItems.length,1);assert.equal(before.failedQuizItems.length,1);
+  const other=await f.create('another-owner');
+  const worker=createDiscoveryWorker({allowedOrigin:'https://app.example',maximumCommandBytes:4096},{now:f.now,requestLogger:()=>({ok:true,value:null}),authenticate:async()=>({ok:true,value:{ownerId:'owner',email:'owner@example.test'}}),acquireRss:async()=>assert.fail('No network'),knowledgeWorkflow:{start:async()=>assert.fail('Dismiss must not start processing'),control:command=>f.service.control(command),status:command=>f.service.status(command),sourceStatus:async()=>{const run=unwrap(await f.repo.findById('owner',f.run.runId));return {ok:true,value:{ownerId:'owner',sourceId:'source',run:{...run,progress:unwrap(await f.progress.read(run))}}};}}});
+  const gateway=new SourceLibraryGatewayClient({baseUrl:'https://worker.example',timeoutMs:5000,fetch:async(input,init)=>worker.fetch(new Request(input,{...init,headers:{origin:'https://app.example'}}))});
+  unwrap(await gateway.dismissWorkflowFailures({runId:f.run.runId,expectedRevision:2,idempotencyKey:'dismiss-both'}));
+  const publicStatus=unwrap(await gateway.workflowStatus('source'));
+  assert.equal(publicStatus.reasonCode,null);assert.equal(publicStatus.run.progress.failedQuizItems,undefined);assert.equal(publicStatus.run.progress.failedItems,undefined);
+  const reloaded=unwrap(await f.repo.findById('owner',f.run.runId)),after=unwrap(await f.progress.read(reloaded));
+  assert.equal(reloaded.state,'completed');assert.equal(reloaded.failureKind,'WorkflowFailedItemsDismissed');assert.deepEqual(reloaded.counts,completed.counts);
+  assert.equal(after.failedItems,undefined);assert.equal(after.failedQuizItems,undefined);assert.deepEqual(after.knowledgePoints,before.knowledgePoints);assert.equal(after.generatedQuizQuestions,2);
+  assert.equal(unwrap(await f.progress.read(completed)).failedQuizItems,undefined,'Stale callers cannot restore dismissed failure projections.');
+  assert.equal(unwrap(await f.repo.findById(other.ownerId,other.runId)).revision,other.revision);
+  assert.equal(f.db.prepare('SELECT state FROM library_sources WHERE owner_id=? AND source_id=?').get('owner','source').state,'active');
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=?').get('owner',f.run.runId).n,1,'Paid attempt history is preserved.');
+  assert.equal(unwrap(await f.content.loadScratchpad(f.run)).failedPages.length,1,'Original failure evidence is retained.');
+ }finally{f.close();}
+});

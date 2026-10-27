@@ -1331,3 +1331,33 @@ Deno.test("Library completion notices exclude cold history, partial failures and
   assert(notices.length===0,'Never announce a ready source for '+outcome);page.dispose();
  }
 });
+
+Deno.test("Library dismisses completed failures without removing the source or knowledge and handles failed requests",async()=>{
+ const partial=partialStatus();
+ let state={...partial,reasonCode:/** @type {string|null} */(partial.reasonCode),run:{...partial.run,failureKind:"WorkflowQuizItemsFailed",progress:{...partial.run.progress,failedQuizItems:[{knowledgeId:"no-quiz",summary:"Retained point",failureKind:"KnowledgeModelUnavailable",attempts:4}]}}};
+ let fail=true,posts=0,disables=0;const errors=/** @type {string[]} */([]),notices=/** @type {string[]} */([]);
+ /** @type {(()=>void)|undefined} */let click;
+ const retained={knowledgeId:"keep",sourceId:source.id,summary:"Retain this knowledge",sourceRevision:source.revision,questionId:"q-keep",title:source.title,sourceUrl:source.canonicalUrl,evidenceAnchorIds:["anchor"],media:null,questionLocked:true,sourceClassification:null,sourceClassificationRevision:0};
+ const page=createLibraryPage({fetch:async(input,init)=>{
+  const path=new URL(String(input)).pathname;
+  if(path.endsWith("/source-library"))return Response.json({result:{items:[source],interestAreas:[],nextCursor:null}});
+  if(path.endsWith("/library-knowledge"))return Response.json({result:{items:[retained]}});
+  if(path.endsWith("/control")){
+   posts++;const command=JSON.parse(String(init?.body));assert(command.action==="dismiss-failures"&&command.expectedRevision===4&&command.runId===state.run.runId,"Dismiss targets the exact completed revision.");
+   if(fail)return Response.json({error:"WorkflowPersistenceFailed"},{status:503});
+   state={...state,reasonCode:null,message:null,run:{...state.run,revision:5,failureKind:"WorkflowFailedItemsDismissed",progress:{...state.run.progress,failedItems:[],failedQuizItems:[]}}};
+   return Response.json({result:state.run});
+  }
+  if(init?.method==="POST"){disables++;throw new Error("Unexpected mutation");}
+  return Response.json({result:state});
+ },gatewayBaseUrl:"https://app.example/",escapeHtml:baseModel().escapeHtml,formatDate:v=>v,createId:()=>`dismiss-${posts}`,confirmDisable:()=>{throw new Error("Must not remove source");},createObserver:()=>null,schedule:()=>1,cancel:()=>{},onNotice:message=>notices.push(message),onError:message=>errors.push(message),rerender:()=>{}});
+ await page.load();assert(page.render({}).includes("Dismiss failed items")&&page.render({}).includes("Remove source"),"Distinct actions explain their scope.");
+ page.bind(/** @type {HTMLElement} */(/** @type {unknown} */({querySelector:()=>null,querySelectorAll:(/** @type {string} */ selector)=>selector==="[data-library-workflow-dismiss]"?[{getAttribute:(/** @type {string} */ name)=>name.endsWith("revision")?"4":state.run.runId,addEventListener:(/** @type {string} */ _event,/** @type {()=>void} */ handler)=>{click=handler;}}]:[]})));
+ if(!click)throw new Error("Dismiss not bound");click();await new Promise(r=>setTimeout(r,0));
+ assert(posts===1&&errors.length===1&&page.render({}).includes("Failed quiz items (1)"),`Failed writes keep reports and retry options visible: posts=${posts}, errors=${JSON.stringify(errors)}.`);
+ fail=false;click();click();await new Promise(r=>setTimeout(r,0));
+ const html=page.render({});assert(posts===2&&disables===0&&notices.length===1,"Double clicks issue one dismiss command and no delete calls.");
+ assert(!html.includes("Failed quiz items")&&!html.includes("Failed items (")&&!html.includes("Retry failed")&&!html.includes("Dismiss failed items"),"A refresh clears reports and retry actions.");
+ assert(html.includes(source.title)&&html.includes(retained.summary)&&html.includes("Extracted knowledge points (1)"),"Source and accepted knowledge remain visible.");page.dispose();
+ const active=renderLibraryRoute({...baseModel(),workflowStatuses:[{...partial,run:{...partial.run,state:"extraction-loop"}}]});assert(!active.includes("Dismiss failed items"),"Running jobs cannot be dismissed.");
+});

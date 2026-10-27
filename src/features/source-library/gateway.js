@@ -282,7 +282,10 @@ export class SourceLibraryGatewayClient {
   /** @param {{readonly runId:string,readonly expectedRevision:number,readonly idempotencyKey:string}} command */
   async cancelWorkflow(command) {return this.#controlWorkflow(command,"abandon");}
 
-  /** @param {{readonly runId:string,readonly expectedRevision:number,readonly idempotencyKey:string}} command @param {"resume"|"abandon"|"retry-quizzes"} action @returns {Promise<Result<WorkflowRunStatus, SourceGatewayFailure>>} */
+  /** @param {{readonly runId:string,readonly expectedRevision:number,readonly idempotencyKey:string}} command */
+  async dismissWorkflowFailures(command) {return this.#controlWorkflow(command,"dismiss-failures");}
+
+  /** @param {{readonly runId:string,readonly expectedRevision:number,readonly idempotencyKey:string}} command @param {"resume"|"abandon"|"retry-quizzes"|"dismiss-failures"} action @returns {Promise<Result<WorkflowRunStatus, SourceGatewayFailure>>} */
   async #controlWorkflow(command,action) {
     if (!isRecord(command) || !isNonEmptyText(command.runId) || !Number.isSafeInteger(command.expectedRevision) || command.expectedRevision < 1 || !isNonEmptyText(command.idempotencyKey)) return invalid("command");
     const response = await this.#request("api/knowledge-workflows/control", "POST", { runId: command.runId, expectedRevision: command.expectedRevision, action, idempotencyKey: command.idempotencyKey });

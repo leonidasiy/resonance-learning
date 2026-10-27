@@ -53,7 +53,7 @@ export class D1KnowledgeWorkflowProgressRepository {
   async read(run) {
     if (!isKnowledgeWorkflowRun(run)) return {ok:false,error:{kind:'WorkflowProgressCommandInvalid'}};
     try {
-      const row = await this.#database.prepare(`SELECT r.state,r.updated_at AS run_updated_at,p.current_url,p.page_title,p.section_title,p.stage,p.updated_at,s.scratchpad_json,s.updated_at AS scratchpad_updated_at
+      const row = await this.#database.prepare(`SELECT r.state,r.failure_kind,r.updated_at AS run_updated_at,p.current_url,p.page_title,p.section_title,p.stage,p.updated_at,s.scratchpad_json,s.updated_at AS scratchpad_updated_at
         FROM knowledge_workflow_runs r LEFT JOIN knowledge_workflow_progress p ON p.owner_id=r.owner_id AND p.run_id=r.run_id
         LEFT JOIN extraction_scratchpads s ON s.owner_id=r.owner_id AND s.run_id=r.run_id
         WHERE r.owner_id=? AND r.run_id=? AND r.source_id=? AND r.source_revision=?`).bind(run.ownerId,run.runId,run.sourceId,run.sourceRevision).first();
@@ -74,8 +74,10 @@ export class D1KnowledgeWorkflowProgressRepository {
       const processed = scratchpad?.processedUrls ?? [], discovered = scratchpad?.discoveredUrls ?? [];
       const latest = Array.isArray(scratchpad?.pageNotes) ? scratchpad.pageNotes.at(-1) : null;
       const timestamps = [row.run_updated_at,row.updated_at,row.scratchpad_updated_at].filter(text).sort();
-      const failedQuizzes=await readFailedQuizItems(this.#database,run);if(!failedQuizzes.ok)return failedQuizzes;
-      const progress = parseWorkflowProgress({currentUrl:row.current_url ?? (record(latest) ? latest.url ?? null : null),pageTitle:row.page_title ?? (record(latest) ? latest.title ?? null : null),sectionTitle:row.section_title ?? null,stage:row.state === 'completed' || row.state === 'abandoned' ? null : row.stage ?? null,updatedAt:timestamps.at(-1) ?? null,knowledgePoints,generatedQuizQuestions:questions.n,failedItems:scratchpad?.failedPages,failedQuizItems:failedQuizzes.value,processedPageCount:processed.length,totalPages:discovered.length ? new Set([...processed,...discovered]).size : null});
+      // Keep paid attempts for diagnostics; dismissed failures leave the user's retry list.
+      const dismissed=row.state==='completed'&&row.failure_kind==='WorkflowFailedItemsDismissed';
+      const failedQuizzes=dismissed?{ok:/** @type {const} */(true),value:[]}:await readFailedQuizItems(this.#database,run);if(!failedQuizzes.ok)return failedQuizzes;
+      const progress = parseWorkflowProgress({currentUrl:row.current_url ?? (record(latest) ? latest.url ?? null : null),pageTitle:row.page_title ?? (record(latest) ? latest.title ?? null : null),sectionTitle:row.section_title ?? null,stage:row.state === 'completed' || row.state === 'abandoned' ? null : row.stage ?? null,updatedAt:timestamps.at(-1) ?? null,knowledgePoints,generatedQuizQuestions:questions.n,failedItems:dismissed?[]:scratchpad?.failedPages,failedQuizItems:failedQuizzes.value,processedPageCount:processed.length,totalPages:discovered.length ? new Set([...processed,...discovered]).size : null});
       return progress === null ? {ok:false,error:{kind:'WorkflowProgressReadFailed'}} : {ok:true,value:progress};
     } catch (error) {
       this.#logger({event:'workflow-progress-read-failure',ownerId:run.ownerId,runId:run.runId,failureKind:'WorkflowProgressReadFailed'});

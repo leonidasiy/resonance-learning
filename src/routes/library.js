@@ -139,6 +139,7 @@ function renderSource(model, source) {
   const retry = (quizzes=false) => shellMarkup(17, escapeHtml(workflowStatus?.run?.runId??""), workflowStatus?.run?.revision??0, `${pending?"disabled":""} ${quizzes?"data-library-workflow-quiz":""}`, shellMarkup(quizzes?89:workflowStatus?.reasonCode === "partial-failure"?82:(workflowStatus?.run?.counts.pages??0)>0||(workflowStatus?.run?.counts.knowledgePoints??0)>0||(workflowStatus?.run?.progress?.knowledgePoints.length??0)>0?90:83));
   const workflowRetry = workflowStatus?.run && (workflowStatus.reasonCode === "retryable-failure" || workflowStatus.reasonCode === "partial-failure") ? ((workflowStatus.reasonCode === "retryable-failure" || workflowStatus.run.progress?.failedItems?.length ? retry():"") + (workflowStatus.run.state==="completed"&&workflowStatus.run.progress?.failedQuizItems?.length?retry(true):"")) : "";
   const workflowCancel=workflowStatus?.run != null && (model.cancellationRetries?.includes(workflowStatus.run.runId) || !["completed","abandoned"].includes(workflowStatus.run.state)) ? shellMarkup(48,escapeHtml(workflowStatus.run.runId),workflowStatus.run.revision,pending?"disabled":"") : "";
+  const dismiss=workflowStatus?.run?.state==="completed"&&workflowStatus.reasonCode==="partial-failure"?shellMarkup(91,escapeHtml(workflowStatus.run.runId),workflowStatus.run.revision,pending?"disabled":""):"";
   const upload = workflowStatus?.run?.state === "awaiting-upload"
     ? shellMarkup(18, escapeHtml(`#upload?${new URLSearchParams({sourceId:source.id,runId:workflowStatus.run.runId})}`))
     : workflowStatus?.reasonCode==="partial-failure"&&workflowStatus.run?.counts.knowledgePoints===0&&(source.origin??"web")==="web"?shellMarkup(84,sourceId):"";
@@ -146,7 +147,7 @@ function renderSource(model, source) {
   const extracted = workflowStatus?.run?.state === "completed" || !progress && knowledge.length > 0
     ? shellMarkup(19, sourceId, knowledge.length, knowledge.length ? shellMarkup(52, knowledge.map(point => shellMarkup(51, escapeHtml(point.summary))).join("")) : shellMarkup(53))
     : "";
-  return shellMarkup(20, sourceId, sourceId, sourceId, escapeHtml(source.title), escapeHtml(source.origin==="private-document"?"Uploaded material":new URL(source.canonicalUrl).hostname), formatDate(source.approvedAt), escapeHtml(source.description), extracted + workflowNotice + upload, workflowRetry + workflowCancel, escapeHtml(sourceHref(source.canonicalUrl)), sourceId, source.revision, pending ? "disabled" : "", pending ? "Removing..." : "Remove");
+  return shellMarkup(20, sourceId, sourceId, sourceId, escapeHtml(source.title), escapeHtml(source.origin==="private-document"?"Uploaded material":new URL(source.canonicalUrl).hostname), formatDate(source.approvedAt), escapeHtml(source.description), extracted + workflowNotice + upload, workflowRetry + dismiss + workflowCancel, escapeHtml(sourceHref(source.canonicalUrl)), sourceId, source.revision, pending ? "disabled" : "", pending ? "Please wait..." : "Remove source");
 }
 
 /** @param {WorkflowSourceStatus|null} status @param {(value:string)=>string} escapeHtml */
