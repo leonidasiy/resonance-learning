@@ -297,9 +297,18 @@ pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .data-list h3 { font-family: var(--font-display); font-size: 24px; }
 .data-list p { color: var(--text-muted); font-size: 13px; }
 .library-workflow-progress progress { width: 100%; height: 8px; accent-color: var(--action); }
-.library-knowledge { margin: 16px 0; padding: 16px; background: var(--surface-subtle); }
+.library-knowledge { margin: 16px 0; padding: 28px; border: 1px solid var(--border); border-top: 3px solid var(--action); border-radius: var(--panel-radius); background: var(--surface); }
 .library-knowledge h4 { margin: 0; }
-.library-workflow-progress { padding: 28px; border: 1px solid var(--border); border-top: 3px solid var(--action); border-radius: var(--panel-radius); background: var(--surface); }
+.library-about { margin: 16px 0; border-block: 1px solid var(--border); }
+.library-about > p { max-width: 80ch; margin: 0 0 20px; font-size: 14px; line-height: 1.8; }
+.library-disclosure > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; list-style: none; font-size: 14px; font-weight: 600; }
+.library-disclosure > summary::-webkit-details-marker { display: none; }
+.library-disclosure > summary::after { content: ""; width: 8px; height: 8px; margin: 0 4px; flex-shrink: 0; border-right: 2px solid var(--action); border-bottom: 2px solid var(--action); transform: rotate(45deg); transition: transform 160ms; }
+.library-disclosure[open] > summary::after { transform: rotate(225deg); }
+.library-knowledge.library-disclosure > summary { font-size: 16px; }
+.library-knowledge ul { margin: 8px 0 0; padding: 0; list-style: none; }
+.library-knowledge li { border-top: 1px solid var(--border); padding: 16px 0; }
+.library-knowledge li p { max-width: 80ch; margin: 0; color: var(--text); font-size: 15px; line-height: 1.7; }
 .processing-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); align-items: center; gap: 32px; padding-bottom: 24px; }
 .processing-heading h4 { font: 500 clamp(25px, 3vw, 34px)/1.2 var(--font-display); }
 .processing-heading [role=status] { margin: 16px 0 0; font-size: 14px; line-height: 1.8; }
@@ -328,7 +337,7 @@ pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .library-workflow-progress > details { border-top: 1px solid var(--border); }
 .library-workflow-progress > .settings-form-note { margin: 16px 0 0; }
 @media (max-width: 800px) {
-  .library-workflow-progress { padding: 20px; }
+  .library-knowledge { padding: 20px; }
   .processing-hero { grid-template-columns: minmax(0, 1fr); gap: 24px; }
   .processing-flow { max-width: 360px; justify-self: center; }
 }

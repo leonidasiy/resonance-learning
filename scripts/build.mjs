@@ -23,9 +23,9 @@ export const ARTIFACT_BUDGETS = Object.freeze({
   }),
   stylesheet: Object.freeze({
     label: "CSS",
-    // Includes the requested animated processing card (2026-10-27): +2,790 raw / +533 gzip bytes.
-    rawBytes: 47_872,
-    gzipBytes: 10_356,
+    // Measured animated processing and shared source-card disclosures (2026-10-27).
+    rawBytes: 48_723,
+    gzipBytes: 10_494,
   }),
   pdfRenderer: Object.freeze({
     label: "On-demand PDF renderer",
