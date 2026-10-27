@@ -155,21 +155,23 @@ function renderSourceProgress(status,escapeHtml){
   const progress=run.progress;
   const points=progress?.knowledgePoints??[];
   const failures=progress?.failedItems??[];
-  const completed=run.state==="completed";
+  if (run.state==="completed") {
+    const failureCopy=JSON.parse(shellMarkup(71));
+    const report=failures.length?shellMarkup(73,failures.length,failures.map(item=>shellMarkup(74,escapeHtml(item.url),escapeHtml(item.title.replace(/^https:\/\/\S+ — captured page\.pdf\.pkpi — (Page \d+)$/u,"$1")),shellMarkup(failureCopy[item.failureKind]??81),item.attempts)).join("")):"";
+    const quizFailures=progress?.failedQuizItems??[];
+    const quizReport=quizFailures.length?shellMarkup(87,quizFailures.length,quizFailures.map(item=>shellMarkup(88,escapeHtml(item.summary),item.attempts)).join("")):"";
+    return report + quizReport;
+  }
+  const sourceId=escapeHtml(status.sourceId);
   const active=countProcessingWorkflowStatuses([status])>0;
   const knowledgeCount=Math.max(run.counts.knowledgePoints,points.length);
-  const failureCopy=JSON.parse(shellMarkup(71));
-  const report=failures.length&&completed?shellMarkup(73,failures.length,failures.map(item=>shellMarkup(74,escapeHtml(item.url),escapeHtml(item.title.replace(/^https:\/\/\S+ — captured page\.pdf\.pkpi — (Page \d+)$/u,"$1")),shellMarkup(failureCopy[item.failureKind]??81),item.attempts)).join("")):"";
-  const quizFailures=progress?.failedQuizItems??[];
-  const quizReport=completed&&quizFailures.length?shellMarkup(87,quizFailures.length,quizFailures.map(item=>shellMarkup(88,escapeHtml(item.summary),item.attempts)).join("")):"";
-  if (completed) return report + quizReport;
   const questions=progress?shellMarkup(64,progress.generatedQuizQuestions):shellMarkup(57);
   const stage=(active?progress?.stage:status.message)??(active && run.state === "awaiting-time-limit-decision" ? shellMarkup(44) : workflowStageMessage(run.state));
   const pageCount=progress?.processedPageCount??run.counts.pages;
   const total=progress?.totalPages;
   const meter=shellMarkup(69,total??1,total==null?(active?"":'value="0"'):`value="${pageCount}"`,active?"library-processing-spinner":"",`${pageCount}${total==null?"":` of ${total}`}`,active&&progress?.sectionTitle?` · ${escapeHtml(progress.sectionTitle)}`:"");
   const summaries=points.length?shellMarkup(52,points.map(point=>shellMarkup(51,escapeHtml(point.summary))).join("")):shellMarkup(knowledgeCount?54:53);
-  return shellMarkup(49,escapeHtml(status.sourceId),escapeHtml(status.sourceId),escapeHtml(stage),escapeHtml(shellMarkup(66,knowledgeCount,knowledgeCount===1?"point":"points",questions)),meter+(points.length?shellMarkup(70,escapeHtml(points.at(-1)?.summary??"")):""),knowledgeCount,summaries,report+quizReport+(active?shellMarkup(55):""));
+  return shellMarkup(49,sourceId,sourceId,(active?shellMarkup(65)+" ":"")+escapeHtml(stage),escapeHtml(shellMarkup(66,knowledgeCount,knowledgeCount===1?"point":"points",questions)),meter+(points.length?shellMarkup(70,escapeHtml(points.at(-1)?.summary??"")):""),knowledgeCount,summaries,active?shellMarkup(55):"");
 }
 
 /** @param {LibrarySource} source @param {WorkflowSourceStatus | null} status @returns {string | null} */
