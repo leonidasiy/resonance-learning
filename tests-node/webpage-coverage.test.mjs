@@ -128,3 +128,26 @@ test('a failed tail drains the early review without marking the source complete'
  const result=await requestWebpageFacts({requireCoverage:true,normalizeClaims:true,deferQualityReview:true,taskId:'pipeline-failure',input:{url,evidence:source,coverageGoals:[]},maxOutputTokens:4096,logger:()=>{},onDrafts:async()=>{await new Promise(resolve=>setTimeout(resolve,5));finished=true;return {ok:true,value:null};},generate:command=>command.taskId.includes(':coverage-v1:2')?Promise.resolve({ok:false,error:{kind:'SyntheticTailFailure'}}):model(command)});
  assert.equal(result.ok,false);assert.equal(result.error.kind,'SyntheticTailFailure');assert(finished);
 });
+
+test('coverage keeps table rows and captured column labels together across bounded batches',async()=>{
+ const prefix='html:nth-of-type(1) > body:nth-of-type(1) > '+Array(8).fill('div:nth-of-type(1)').join(' > ')+' > table:nth-of-type(1)';
+ const cells=Array.from({length:13},(_,row)=>Array.from({length:4},(_,column)=>{
+  const locator=`${prefix} > tbody:nth-of-type(1) > tr:nth-of-type(${row+1}) > td:nth-of-type(${column+1}) > p:nth-of-type(1)`;
+  return {id:`dom:${locator}`,locator,sectionId:'genres',kind:'text',figureId:null,text:row===0?['Genre','Tempo','Traits','Instruments'][column]:`Genre ${row} column ${column}: ${'captured music information '.repeat(4)}`};
+ })).flat();
+ const source={url,blocks:cells,headings:[],images:[],warnings:[]},model=responder(),seen=[];
+ const result=await run(source,async command=>{
+  if(command.phase==='extraction'){
+   const supplied=command.input.sourceBlocks;seen.push(supplied);
+   for(const cell of supplied){
+    const row=cell.id.match(/tr:nth-of-type\((\d+)\)/u)[1];
+    assert.equal(supplied.filter(c=>c.id.includes(`tr:nth-of-type(${row})`)).length,4,'Every captured row must retain all its cells');
+   }
+   assert(cells.slice(0,4).every(header=>supplied.some(c=>c.id===header.id)),'Later table batches need captured column labels');
+  }
+  return model(command);
+ });
+ assert(result.ok);assert(seen.length>1);
+ assert.deepEqual(result.value.blockCoverage.map(c=>c.blockId),cells.map(c=>c.id));
+ assert.equal(new Set(result.value.candidates.map(c=>c.normalizedHash)).size,result.value.candidates.length);
+});

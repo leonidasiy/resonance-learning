@@ -90,3 +90,13 @@ Deno.test("internal and provider failures never force Upload while actual source
   for(const kind of ['FirecrawlBrowserResponseInvalid','FirecrawlBrowserOutputTruncated','FirecrawlBrowserCredentialUnavailable','KnowledgeBrowserNavigationFailed','KnowledgeBrowserTimedOut','WorkflowProgressPersistenceFailed','WorkflowStageCallUncertain','WorkflowStagePersistenceFailed','KnowledgeModelCredentialMissing','RobotsFetchUnavailable','KnowledgePageRateLimited'])assertEquals(requiresWorkflowUpload({kind:'WorkflowRobotsFailed',detailKind:kind}),false);
   for(const kind of ['RobotsDenied','KnowledgePageAuthenticationRequired','KnowledgePagePaywallDetected','KnowledgePageBotAccessDenied','KnowledgePageTypeUnsupported','KnowledgePageContentTypeUnsupported','WorkflowRightsNotAllowed','WorkflowUploadRequired'])assertEquals(requiresWorkflowUpload({kind:'WorkflowExtractionFailed',detailKind:kind}),true);
 });
+
+Deno.test("CPU retries pass distinct bounded execution numbers without changing the run",async()=>{
+ const attempts=/** @type {number[]} */([]);
+ const result=await executeRetryingWorkflowStep({step:{do:async(_name,_config,callback)=>callback(),sleepUntil:async()=>{}},name:"cpu-admission",now:()=>0,load:async()=>({ok:true,value:{revision:18}}),execute:async(run,attempt)=>{
+  assertEquals(run.revision,18);attempts.push(attempt??0);
+  if(attempts.length<4)throw new Error("Worker exceeded CPU time limit.");
+  return {ok:true,value:null};
+ }});
+ assertEquals(result.ok,true);assertEquals(attempts.join(","),"1,2,3,4");
+});

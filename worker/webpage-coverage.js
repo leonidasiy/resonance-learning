@@ -9,6 +9,10 @@ const text=value=>typeof value==='string'&&value.trim()!=='';
 
 // Keep text and its citation together, and bound attention per request without discarding source blocks.
 const BATCH_BYTES=12_000;
+/** @param {{locator:string}} block */
+const tablePath=block=>block.locator.match(/^(.*\btable:nth-of-type\(\d+\))(?= > |$)/u)?.[1];
+/** @param {{locator:string}} block */
+const rowPath=block=>block.locator.match(/^(.*\btr:nth-of-type\(\d+\))(?= > |$)/u)?.[1];
 const coveragePrompt=`\n# Required captured-block coverage audit (v1)\nIndependently inspect EVERY supplied source block, including the last one. Extract missing useful relationships in additionalCandidates. The extractor's notes, claimed truncation, drafts and memory are not evidence that text is missing or already committed. All sourceBlocks in this request are available; each includes its exact citationReference. Do not accept a partial reading as completion.\nIn addition to the usual output fields return blockCoverage, exactly one entry for EVERY source block, in supplied order: {blockId: exact supplied block ID, disposition: "candidates"|"excluded"|"unresolved", candidateHashes: array of final child/additional candidate hashes supported by this block, reason: nonempty specific explanation}. Use candidates only when at least one listed final candidate cites this block. Use excluded with no hashes only after inspecting the whole block and explaining why it teaches no additional useful source-supported relationship (e.g. administrative, repeated, already committed in supplied previousKnowledge, or incidental context). Do not exclude educational text merely because a related topic has a candidate. Zero useful points is valid but must be explained per block. Use unresolved with no hashes if text is missing, incomplete, unreadable or you cannot assess it; the application will keep the page incomplete. Do not fabricate candidates to satisfy coverage. Return no other new fields.`;
 
 /** @param {readonly {id:string}[]} blocks */
@@ -49,11 +53,18 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       const current=chunks.at(-1);
       if(!current||size+sectionBytes>BATCH_BYTES){chunks.push([...section]);size=sectionBytes;}
       else {current.push(...section);size+=sectionBytes;}
-    }else for(const block of section){
-      const bytes=new TextEncoder().encode(JSON.stringify(block)).byteLength;
+    }else {
+     /** @type {typeof chunks} */const units=[];
+     for(const block of section){
+      const row=rowPath(block),previous=units.at(-1);
+      if(row&&previous&&rowPath(previous[0])===row)previous.push(block);else units.push([block]);
+     }
+     for(const unit of units){
+      const bytes=new TextEncoder().encode(JSON.stringify(unit)).byteLength;
       const current=chunks.at(-1);
-      if(!current||size+bytes>BATCH_BYTES){chunks.push([block]);size=bytes;}
-      else {current.push(block);size+=bytes;}
+      if(!current||size+bytes>BATCH_BYTES){chunks.push([...unit]);size=bytes;}
+      else {current.push(...unit);size+=bytes;}
+     }
     }
   }
   /** @type {Facts['candidates'][number][]} */const candidates=[];
@@ -63,7 +74,12 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
   /** @type {Promise<import('./webpage-facts.js').Result<null>>|undefined} */let ready;
   try {
   for(let index=0;index<chunks.length;index++){
-    const blocks=chunks[index],sectionIds=new Set(blocks.map(b=>b.sectionId));
+    const targets=chunks[index],targetIds=new Set(targets.map(b=>b.id));
+    const tables=new Set(targets.map(tablePath).filter(Boolean));
+    // Repeat captured table labels as citable context; account for each original block only once.
+    const firstRows=new Map([...tables].map(table=>[table,rowPath(input.evidence.blocks.find(b=>tablePath(b)===table)??targets[0])]));
+    const blocks=input.evidence.blocks.filter(b=>targetIds.has(b.id)||tables.has(tablePath(b))&&rowPath(b)!==undefined&&rowPath(b)===firstRows.get(tablePath(b)));
+    const sectionIds=new Set(blocks.map(b=>b.sectionId));
     /** @type {BlockCoverage[]|null} */let audited=null;
     const result=await batch({...dependencies,requireCoverage:false,taskId:`${dependencies.taskId}:coverage-v1:${index+1}`,input:{...input,evidence:{...input.evidence,blocks,headings:input.evidence.headings.filter(h=>sectionIds.has(h.sectionId)),images:[]}},generate:async command=>{
       const task=/** @type {Record<string,unknown>} */(command.input);
@@ -114,7 +130,7 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       if(existing&&existing.summary!==candidate.summary)return {ok:false,error:{kind:'WebpageFactsInvalid'}};
       if(!existing)candidates.push(candidate);
     }
-    coverage.push(.../** @type {BlockCoverage[]} */(audited));partialIssues.push(...result.value.partialIssues);notes.push(result.value.notes);
+    coverage.push(.../** @type {BlockCoverage[]} */(audited).filter(entry=>targetIds.has(entry.blockId)));partialIssues.push(...result.value.partialIssues);notes.push(result.value.notes);
     // One bounded early wave overlaps later extraction; remaining drafts stay in the complete observation.
     if(ready===undefined&&result.value.candidates.length&&dependencies.onDrafts)ready=dependencies.onDrafts(result.value.candidates).catch(()=>({ok:false,error:{kind:'KnowledgeReviewFailed'}}));
   }
