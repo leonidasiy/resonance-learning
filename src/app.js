@@ -230,6 +230,7 @@ const dailyLearningService = new DailyLearningService({
   createId: () => crypto.randomUUID(),
 });
 
+let revealProcessingOnNavigation = false;
 let activeView = parseRoute(location.hash).view;
 let discoveryItemId = parseRoute(location.hash).discoveryItemId;
 /** @type {import("./features/feed/service.js").FeedService | null} */
@@ -548,7 +549,7 @@ async function loadActiveRoute() {
         if (uploadPage === null) {
           const { createUploadPage } = await import("./features/uploads/page.js");
           const library = libraryPageController;
-          uploadPage = createUploadPage({ fetch, baseUrl:new URL("./",location.href).href,createId:()=>crypto.randomUUID(),onChange:()=>render(),onRenamed:(id,title)=>library.renamed(id,title),onExtracted:()=> (learnerController?.refreshFeed(),location.hash="library"),upload:async(id,form,context)=>{await library.uploadMaterial(id,form,context);return library.uploadResult();} });
+          uploadPage = createUploadPage({ storage:resolveSettingsStorage(),onError:message=>{errorMessage=message;notice=null;},fetch, baseUrl:new URL("./",location.href).href,createId:()=>crypto.randomUUID(),onChange:()=>render(),onRenamed:(id,title)=>library.renamed(id,title),onExtracted:()=> (learnerController?.refreshFeed(),location.hash="library"),upload:async(id,form,context)=>{await library.uploadMaterial(id,form,context);return library.uploadResult();} });
         }
         const prefill = uploadPrefill;
         uploadPrefill = null;
@@ -1096,6 +1097,10 @@ function bindInteractions() {
       }
     });
   });
+  root.querySelector("[data-library-processing-open]")?.addEventListener("click", () => {
+    if (activeView === "library") void libraryPageController?.revealProcessing();
+    else { revealProcessingOnNavigation = true; location.hash = "library"; }
+  });
   if (activeView === "progress") progressPage?.bind(root);
   if (activeView === "settings") settingsPage?.bind(root);
   if (activeView === "discover") discoveryPage?.bind(root);
@@ -1487,12 +1492,16 @@ function registerOfflineSupport() {
       scrollTo(0, top);
       return;
     }
-    void loadActiveRoute().then(() =>
-      renderWithTransition(
+    void loadActiveRoute().then(async () => {
+      await renderWithTransition(
         `nav-${route.view}`,
         route.view === "feed" ? "feed-title" : `${route.view}-title`,
-      )
-    );
+      );
+      if (revealProcessingOnNavigation && route.view === "library") {
+        revealProcessingOnNavigation = false;
+        await libraryPageController?.revealProcessing();
+      }
+    });
   });
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.addEventListener("message", (event) => {

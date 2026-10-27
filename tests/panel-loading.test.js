@@ -122,7 +122,7 @@ Deno.test("loading markup is accessible, has restrained art, and excludes failur
 Deno.test("desktop Discover navigation starts loading before the detail-preservation path can apply", async () => {
   let click = () => {}, hashchange = () => {}, loads = 0;
   const state = {
-    activeView: "feed", discoveryItemId: null, location: { hash: "#feed" },
+    activeView: "feed", discoveryItemId: null, revealProcessingOnNavigation: false, location: { hash: "#feed" },
     root: { querySelectorAll: () => [{ getAttribute: () => "discover", addEventListener: (/** @type {string} */ _event, /** @type {()=>void} */ callback) => { click = callback; } }], querySelector: () => null },
     addEventListener: (/** @type {string} */ _event, /** @type {()=>void} */ callback) => { hashchange = callback; },
     parseRoute: () => ({ view: "discover", discoveryItemId: null }),

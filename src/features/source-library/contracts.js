@@ -51,6 +51,7 @@
  *   readonly description: string,
  *   readonly adapter: SourceAdapterContract,
  *   readonly primarySubject?: string | null,
+ *   readonly sourceTopic?: string | null,
  *   readonly interestAreaIds: readonly string[],
  *   readonly identityEvidence: readonly SourceIdentityEvidence[],
  *   readonly state: LibrarySourceState,

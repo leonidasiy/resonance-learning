@@ -14,7 +14,12 @@ import { URL_CAPTURE_TYPE } from "../features/knowledge-workflows/url-capture.js
 /** @import { LibrarySource, SourceInterestArea, SourceSearchScope } from "../features/source-library/contracts.js" */
 /** @import { WorkflowSourceStatus } from "../features/source-library/gateway.js" */
 
+import { loadOptions, saveOptions } from "../features/experience/options.js";
 const freeze = Object.freeze;
+/** @param {unknown} value @returns {value is {searchScope:SourceSearchScope,externalProcessingAllowed:boolean}} */
+function validSearchOptions(value) {
+  return typeof value === "object" && value !== null && "searchScope" in value && (value.searchScope === "knowledge" || value.searchScope === "sources") && "externalProcessingAllowed" in value && typeof value.externalProcessingAllowed === "boolean";
+}
 const WORKFLOW_STATUS_REFRESH_MS = 60_000;
 
 /** @typedef {{ readonly observe: (element: Element) => void, readonly disconnect: () => void }} PageObserver */
@@ -96,7 +101,9 @@ export function createLibraryPage(dependencies) {
     if (!(error instanceof Error)) throw error;
     onError(libraryCopy(1));
   }
-  /** @type {SourceSearchScope} */ let searchScope = "knowledge";
+  const savedOptions = loadOptions(dependencies.storage, "resonance-library-search-options", validSearchOptions, onError);
+  /** @type {SourceSearchScope} */ let searchScope = savedOptions?.searchScope ?? "knowledge";
+  let externalProcessingAllowed = savedOptions?.externalProcessingAllowed ?? false;
   /** @type {string | null} */ let message = null;
   /** @type {string | null} */ let pendingSourceId = null;
   /** @type {LibraryKnowledgeCard[]} */ let knowledge = [];
@@ -130,6 +137,7 @@ export function createLibraryPage(dependencies) {
       query,
       subject,
       searchScope,
+      externalProcessingAllowed,
       pendingSourceId,
       message,
     });
@@ -144,7 +152,6 @@ export function createLibraryPage(dependencies) {
         items = [];
         knowledge = [];
         nextCursor = null;
-        searchScope = "knowledge";
         knowledgeSearchResults = [];
         message = null;
         rerender();
@@ -189,13 +196,13 @@ export function createLibraryPage(dependencies) {
     query = rawQuery.trim();
     const rawScope = data.get("searchScope");
     searchScope = rawScope === "sources" ? "sources" : "knowledge";
+    externalProcessingAllowed = data.get("externalProcessingAllowed") === "on";
+    persistSearchOptions();
     if (query === "") return await load(true);
     state = "loading";
     message = null;
     rerender();
     read = (async () => {
-      const externalProcessingAllowed =
-        data.get("externalProcessingAllowed") === "on";
       const result = await gateway.search({
         query,
         scope: searchScope,
@@ -682,6 +689,10 @@ export function createLibraryPage(dependencies) {
     }
   }
 
+  function persistSearchOptions() {
+    saveOptions(dependencies.storage, "resonance-library-search-options", {searchScope,externalProcessingAllowed}, onError);
+  }
+
   /** @param {HTMLElement} root */
   function bind(root) {
     observer?.disconnect();
@@ -702,6 +713,13 @@ export function createLibraryPage(dependencies) {
       rerender();
       const restored = root.querySelector("[data-library-subject]");
       if (restored instanceof HTMLElement) restored.focus();
+    });
+    root.querySelector("[data-library-search]")?.addEventListener("change", event => {
+      if (!(event.currentTarget instanceof HTMLFormElement)) return;
+      const form = new FormData(event.currentTarget);
+      searchScope = form.get("searchScope") === "sources" ? "sources" : "knowledge";
+      externalProcessingAllowed = form.get("externalProcessingAllowed") === "on";
+      persistSearchOptions();
     });
     root.querySelector("[data-library-search]")?.addEventListener(
       "submit",
@@ -801,15 +819,23 @@ export function createLibraryPage(dependencies) {
    * @param {string} sourceId */
   async function revealSource(sourceId){
     if(disposed||!sourceId.trim())return;
-    pendingFocusSourceId=sourceId;query="";searchScope="knowledge";
+    pendingFocusSourceId=sourceId;query="";
     await load();
     const requested=items.find(source=>source.id===sourceId);
     if(requested){subject=librarySourceSubjects(requested,knowledge)[0];rerender();}
     else{pendingFocusSourceId=null;onError(libraryCopy(13));}
   }
+  async function revealProcessing() {
+    const active = workflowStatuses.find(status => countProcessingWorkflowStatuses([status]) > 0);
+    if (active) {
+      await revealSource(active.sourceId);
+      subject = "all";
+      rerender();
+    }
+  }
   function dispose(){disposed=true;stopWorkflowStatusPolling();observer?.disconnect();observer=null;if(focusHandle!==null){cancel(focusHandle);focusHandle=null;}pendingFocusSourceId=null;}
   async function resume(){if(!disposed)return;disposed=false;await loadWorkflowStatuses(true);}
-  return freeze({ load, search, uploadMaterial, bind, render, renamed, revealSource, dispose, resume,
+  return freeze({ load, search, uploadMaterial, bind, render, renamed, revealSource, revealProcessing, dispose, resume,
     renderProcessingStatus: () => renderProcessingStatus({workflowStatuses,escapeHtml,uploading,unavailable:statusUnavailable}), uploadResult: () => ({ok:uploadSucceeded,message:uploadMessage}) });
 }
 

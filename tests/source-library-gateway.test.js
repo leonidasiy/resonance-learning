@@ -527,3 +527,11 @@ Deno.test("knowledge search retains citation fragments while rejecting unsafe UR
     }
   }
 });
+
+Deno.test("source gateway validates source topics before they reach Library", async () => {
+  for (const sourceTopic of [undefined,null,"Meter and rhythm","",42]) {
+    const result = await gateway(async () => Response.json({ownerId:"owner-a",result:{items:[{...source,sourceTopic}],interestAreas:[],nextCursor:null}})).browse({limit:20});
+    assertEquals(result.ok,sourceTopic == null || sourceTopic === "Meter and rhythm");
+    if (result.ok) assertEquals(result.value.items[0].sourceTopic,sourceTopic);
+  }
+});

@@ -49,7 +49,7 @@ async function notificationHarness(initialHash = "#library") {
     showOfflineFailure: () => { throw new Error("UnexpectedOfflineFailure"); },
   };
   new Function(...Object.keys(bindings),
-    `let activeView = "library", discoveryItemId = null;\n${source.slice(start, end)}\nregisterOfflineSupport();`
+    `let activeView = "library", discoveryItemId = null, revealProcessingOnNavigation = false;\n${source.slice(start, end)}\nregisterOfflineSupport();`
   )(...Object.values(bindings));
   return {
     actions, location, loadedRoutes,
@@ -138,4 +138,28 @@ Deno.test("Review notification refreshes its controller while preserving navigat
   const app = await notificationHarness("#review");
   await app.open("resonance-reminder-open");
   assert(JSON.stringify(app.actions) === JSON.stringify(["review", "load", "render:nav-review:review-title"]), "Review reminders explicitly refresh current questions.");
+});
+
+Deno.test("Processing navigation focuses its source after the Library transition finishes", async () => {
+  const app = await Deno.readTextFile("src/app.js");
+  let click = () => {}, hashchange = () => {}, finish = () => {};
+  const transition = new Promise(resolve => { finish = () => resolve(undefined); });
+  const actions = /** @type {string[]} */([]);
+  const state = {
+    activeView: "feed", discoveryItemId: null, revealProcessingOnNavigation: false,
+    location: {hash:"#feed"}, root:{querySelector:()=>({addEventListener:(/** @type {string} */_event,/** @type {()=>void} */callback)=>{click=callback;}})},
+    addEventListener:(/** @type {string} */_event,/** @type {()=>void} */callback)=>{hashchange=callback;},
+    parseRoute:()=>({view:"library",discoveryItemId:null}),matchMedia:()=>({matches:false}),
+    loadActiveRoute:async()=>{actions.push("load");},renderWithTransition:async()=>{actions.push("render");await transition;},
+    libraryPageController:{revealProcessing:async()=>{actions.push("reveal");}},
+  };
+  const binding = app.slice(app.indexOf('  root.querySelector("[data-library-processing-open]")'),app.indexOf('  if (activeView === "progress") progressPage?.bind(root);'));
+  const handler = app.slice(app.indexOf('  addEventListener("hashchange"'),app.indexOf('  if ("serviceWorker" in navigator)'));
+  new Function("state",`with (state) { ${binding}\n${handler} }`)(state);
+  click();hashchange();await Promise.resolve();await Promise.resolve();
+  assert(state.location.hash === "library" && actions.join(",") === "load,render", "Processing navigation must wait while the page transition owns focus.");
+  finish();await new Promise(resolve=>setTimeout(resolve,0));
+  assert(actions.join(",") === "load,render,reveal" && !state.revealProcessingOnNavigation,"The active source is revealed after transition focus settles.");
+  click();await Promise.resolve();
+  assert(actions.join(",") === "load,render,reveal,reveal","Clicking status within Library reveals immediately without another navigation.");
 });

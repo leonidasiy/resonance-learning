@@ -1,4 +1,5 @@
 // @ts-check
+import { loadOptions, saveOptions } from "../experience/options.js";
 import { emptyArt } from "../../empty-state.js";
 import { createShellMarkup } from "../../shell-markup.js";
 import { validatePublisherDestination } from "../source-library/contracts.js";
@@ -7,7 +8,11 @@ import { URL_CAPTURE_TYPE } from "../knowledge-workflows/url-capture.js";
 /** @typedef {"text"|"documents"|"pdf"|"images"|"link"} UploadInput */
 /** @typedef {{readonly title:string,readonly url?:string,readonly manual?:true,readonly reason?:string}} UploadPrefill */
 /** @typedef {{readonly source:import('../source-library/contracts.js').LibrarySource,readonly runId:string,readonly reason:string}} UploadContext */
-/** @typedef {{readonly fetch:typeof fetch,readonly baseUrl:string,readonly onChange:()=>void,readonly createId:()=>string,readonly onExtracted?:(sourceId:string)=>void,readonly onRenamed:(sourceId:string,title:string)=>void,readonly upload:(sourceId:string,form:FormData,context:UploadContext|null)=>Promise<{readonly ok:boolean,readonly message:string}>}} UploadDependencies */
+/** @typedef {{readonly storage?:import("../experience/options.js").OptionStorage,readonly onError?:(message:string)=>void,readonly fetch:typeof fetch,readonly baseUrl:string,readonly onChange:()=>void,readonly createId:()=>string,readonly onExtracted?:(sourceId:string)=>void,readonly onRenamed:(sourceId:string,title:string)=>void,readonly upload:(sourceId:string,form:FormData,context:UploadContext|null)=>Promise<{readonly ok:boolean,readonly message:string}>}} UploadDependencies */
+/** @param {unknown} value @returns {value is {input:UploadInput,imageProcessing:boolean}} */
+function validOptions(value) {
+  return typeof value === "object" && value !== null && "input" in value && ["text","documents","pdf","images","link"].includes(/** @type {string} */(value.input)) && "imageProcessing" in value && typeof value.imageProcessing === "boolean";
+}
 /** @param {UploadDependencies} dependencies */
 export function createUploadPage(dependencies) {
   if (
@@ -18,7 +23,13 @@ export function createUploadPage(dependencies) {
     typeof dependencies.upload !== "function" ||
     typeof dependencies.onRenamed !== "function"
   ) throw new TypeError("UploadPageDependenciesInvalid");
-  /** @type {UploadInput} */ let input = "text";
+  let state = "ready", message = "", generation = 0;
+  const optionsKey = "resonance-upload-options";
+  const optionError = /** @param {string} error */ error => { if (dependencies.onError) dependencies.onError(error); else message = error; };
+  const savedOptions = loadOptions(dependencies.storage, optionsKey, validOptions, optionError);
+  /** @type {UploadInput} */ let input = savedOptions?.input ?? "text";
+  let preferredInput = input;
+  let imageProcessing = savedOptions?.imageProcessing ?? false;
   let title = "";
   let prefillReason = "", prefillUrl = "";
   let draft = new FormData();
@@ -29,7 +40,6 @@ export function createUploadPage(dependencies) {
     timeoutMs: 4_000,
   });
   /** @type {UploadContext|null} */ let context = null;
-  let state = "ready", message = "", generation = 0;
   /** @type {{fingerprint:string,key:string}|null} */ let renameAttempt = null;
   /** Keep in memory only; uploaded content never enters storage or the URL. @param {FormData} form */
   function remember(form) {
@@ -51,6 +61,10 @@ export function createUploadPage(dependencies) {
     if (
       (input === "images" || input === "pdf") && !form.has("imageProcessing")
     ) form.set("imageProcessing", "off");
+    if (input === "pdf") {
+      imageProcessing = form.get("imageProcessing") === "on";
+      persistOptions();
+    }
     draft = form;
     const value = form.get("title");
     if (typeof value === "string") title = value;
@@ -237,7 +251,7 @@ export function createUploadPage(dependencies) {
     const current = ++generation;
     context = null;
     draft = new FormData();
-    input = "text";
+    input = prefill ? "text" : preferredInput;
     renameAttempt = null;
     title = prefill?.title ?? "";
     prefillUrl = prefill?.url ?? "";
@@ -294,7 +308,13 @@ export function createUploadPage(dependencies) {
       }
     }
     input = /** @type {UploadInput} */ (value);
+    preferredInput = input;
+    persistOptions();
     dependencies.onChange();
+  }
+
+  function persistOptions() {
+    saveOptions(dependencies.storage, optionsKey, {input:preferredInput,imageProcessing}, optionError);
   }
 
   function render() {
@@ -327,7 +347,7 @@ export function createUploadPage(dependencies) {
       ).join(""), control, input === "pdf"
         ? shellMarkup(8, draft.has("imageProcessing")
             ? draft.get("imageProcessing") === "on" ? " checked" : ""
-            : "")
+            : imageProcessing ? " checked" : "")
         : "", input === "pdf"
         ? shellMarkup(9, escape(String(draft.get("pageRange") ?? "")))
         : "", shellMarkup(input === "link" ? 37 : 38), busy ? " disabled" : "", busy ? input === "link" ? shellMarkup(35) : "Uploading…" : input === "link" ? shellMarkup(36) : shellMarkup(20), escape(message));

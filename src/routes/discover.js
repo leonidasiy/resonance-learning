@@ -38,6 +38,7 @@
  *   readonly items: readonly DiscoverRouteItem[],
  *   readonly selectedItemId: string | null,
  *   readonly maxVisibleItems: number,
+ *   readonly defaultExtractionScope?: "page"|"platform",
  *   readonly extractionScopes?: Readonly<Record<string,"page"|"platform">>,
  *   readonly pendingId: string | null,
  *   readonly canAct: boolean,
@@ -223,8 +224,8 @@ function renderDecisionActions(model, item, offline) {
     submitLabel: pending ? "Starting…" : "Extract Knowledge Points",
     extractionScope: unsupported ? "" : template(model, "extractionScope", {
       scopeDisabled: unavailable ? "disabled" : "",
-      pageSelected: model.extractionScopes?.[item.id] !== "platform" ? "selected" : "",
-      platformSelected: model.extractionScopes?.[item.id] === "platform" ? "selected" : "",
+      pageSelected: (model.extractionScopes?.[item.id] ?? model.defaultExtractionScope) !== "platform" ? "selected" : "",
+      platformSelected: (model.extractionScopes?.[item.id] ?? model.defaultExtractionScope) === "platform" ? "selected" : "",
     }),
     unavailable: unsupported
       ? model.markup.extractionUnavailable

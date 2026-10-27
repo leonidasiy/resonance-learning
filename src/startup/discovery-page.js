@@ -1,6 +1,14 @@
 // @ts-check
 
 const freeze = Object.freeze;
+import { loadOptions, saveOptions } from "../features/experience/options.js";
+import { isRecord } from "../features/source-library/contracts.js";
+
+/** @typedef {{providerIds:string[],limit:number,extractionScope:"page"|"platform"}} DiscoveryOptions */
+/** @param {unknown} value @returns {value is DiscoveryOptions} */
+function validOptions(value) {
+  return isRecord(value) && Array.isArray(value.providerIds) && value.providerIds.every(id => typeof id === "string" && id.trim() !== "") && new Set(value.providerIds).size === value.providerIds.length && [5,10,20].includes(/** @type {number} */(value.limit)) && (value.extractionScope === "page" || value.extractionScope === "platform");
+}
 
 import {
   createDiscoveryRuntime,
@@ -117,7 +125,10 @@ export function createDiscoveryPage(dependencies) {
   /** @type {import("../routes/discover.js").DiscoverRouteItem[]|null} */ let centralRouteItems = null;
   /** @type {string|null} */ let searchFailure = null;
   let searchQuery = "";
-  let searchLimit = 10;
+  const optionsKey = `resonance:discovery-options:${encodeURIComponent(dependencies.ownerId)}`;
+  const savedOptions = loadOptions(policyStorage, optionsKey, validOptions, onError);
+  let searchLimit = savedOptions?.limit ?? 10;
+  /** @type {"page"|"platform"} */ let extractionScope = savedOptions?.extractionScope ?? "page";
   /** @type {string[]} */ let selectedProviderIds = [];
   /** @type {string | null} */ let pendingDecisionItemId = null;
   /** @type {Map<string, import("../routes/discover.js").DiscoverRouteItem>} */ const routeItems =
@@ -141,9 +152,9 @@ export function createDiscoveryPage(dependencies) {
         searchCapabilities = [...capabilities.value];
         if (!searchInitialized) {
           if (initializeProviders) {
-            selectedProviderIds = searchCapabilities.filter((provider) =>
+            selectedProviderIds = savedOptions === null ? searchCapabilities.filter((provider) =>
               provider.enabled && provider.id !== "youtube"
-            ).map((provider) => provider.id);
+            ).map((provider) => provider.id) : savedOptions.providerIds.filter(id => searchCapabilities.some(provider => provider.id === id && provider.enabled));
           }
           searchFailure = null;
         }
@@ -222,13 +233,23 @@ export function createDiscoveryPage(dependencies) {
         },
       );
       searchForm?.setAttribute("data-discovery-search-bound", "true");
-      searchForm?.addEventListener("input", () => {
+      const rememberOptions = () => {
         if (!(searchForm instanceof HTMLFormElement)) return;
         const values = new FormData(searchForm);
         searchQuery = String(values.get("query") ?? "");
         selectedProviderIds = values.getAll("provider").map(String);
         searchLimit = Number(values.get("limit"));
-      });
+        persistOptions();
+      };
+      searchForm?.addEventListener("input", rememberOptions);
+      searchForm?.addEventListener("change", rememberOptions);
+      root.querySelectorAll('[name="extractionScope"]').forEach(element => element.addEventListener("change", () => {
+        if (!(element instanceof HTMLSelectElement)) return;
+        extractionScope = element.value === "platform" ? "platform" : "page";
+        const itemId = element.closest("[data-discovery-approve]")?.getAttribute("data-discovery-approve");
+        if (itemId) extractionScopes[itemId] = extractionScope;
+        persistOptions();
+      }));
       root.querySelector("[data-discovery-more]")?.addEventListener("click", () => { void loadMore(); });
       root.querySelectorAll("[data-discovery-approve]").forEach((element) =>
         element.addEventListener("submit", (event) => {
@@ -255,6 +276,10 @@ export function createDiscoveryPage(dependencies) {
     openUpload,
     approve,
   });
+
+  function persistOptions() {
+    saveOptions(policyStorage, optionsKey, {providerIds:selectedProviderIds,limit:searchLimit,extractionScope}, onError);
+  }
 
   /**
    * Render one stable item projection. Central search results are intentionally
@@ -302,6 +327,7 @@ export function createDiscoveryPage(dependencies) {
         selectedItemId: route.selectedItemId,
         pendingId: pendingDecisionItemId,
         extractionScopes,
+        defaultExtractionScope: extractionScope,
         canAct: sourceActionsAvailable && route.online,
         search: searchModel(route.online),
         markup,
@@ -312,6 +338,9 @@ export function createDiscoveryPage(dependencies) {
   /** @param {unknown} command */
   async function search(command) {
     const stagedCommand = validCentralSearchCommand(command) ? {...command,providerIds:[...command.providerIds]} : null;
+    if (stagedCommand !== null) {
+      saveOptions(policyStorage, optionsKey, {providerIds:stagedCommand.providerIds,limit:stagedCommand.limit,extractionScope}, onError);
+    }
     const generation = ++searchGeneration;
     morePending = false;
     moreFailure = null;

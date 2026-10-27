@@ -420,7 +420,7 @@ Deno.test("D1 catalog reads active keyset pages and owner-scoped areas", async (
   const database = new DatabaseFixture();
   database.rows.set("revision:owner-a", { catalog_revision: "2:latest" });
   database.allRows.set("browse:owner-a|3", [
-    sourceRow(),
+    {...sourceRow(),primary_subject:"music",source_topic:"Meter"},
     sourceRow({ sourceId: "source:2", approvedAt: "2026-07-22T07:00:00.000Z" }),
   ]);
   database.allRows.set("areas:owner-a", [{
@@ -436,6 +436,9 @@ Deno.test("D1 catalog reads active keyset pages and owner-scoped areas", async (
   assertEquals(page.ok, true);
   if (!page.ok) throw new Error(page.error.kind);
   assertEquals(page.value.items.length, 2);
+  assertEquals(page.value.items[0].primarySubject, "music");
+  assertEquals(page.value.items[0].sourceTopic, "Meter");
+  assertEquals(database.allCalls[0].query.includes("sc.source_revision = s.revision AND sc.status = 'classified') AS source_topic"), true);
   assertEquals(page.value.interestAreas[0].title, "Configured area");
   assertEquals(page.value.catalogRevision, "2:latest");
   assertEquals(

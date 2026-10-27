@@ -169,7 +169,7 @@ Deno.test("Library restores subject selection and reports unavailable or invalid
         if (path.endsWith("/source-status")) return Response.json({ result: { sourceId: new URL(String(input)).searchParams.get("sourceId"), run: null, reasonCode: null, message: null } });
         throw new Error(`Unexpected fixture path: ${path}`);
       },
-      storage: { getItem: key => { assert(key === "resonance-library-subject", "Use the documented preference key."); if (stored === "throws") throw new Error("Synthetic storage denial"); return stored; }, setItem: () => { throw new Error("Reading must not write preferences"); } },
+      storage: { getItem: key => { if (key !== "resonance-library-subject") return null; if (stored === "throws") throw new Error("Synthetic storage denial"); return stored; }, setItem: () => { throw new Error("Reading must not write preferences"); } },
       gatewayBaseUrl: "https://app.example/", escapeHtml: value => value, formatDate: value => value, createId: () => "id", confirmDisable: () => true,
       createObserver: () => null, schedule: () => 1, cancel: () => {}, onNotice: () => {}, onError: message => errors.push(message), rerender: () => {},
     });
@@ -1360,4 +1360,15 @@ Deno.test("Library dismisses completed failures without removing the source or k
  assert(!html.includes("Failed quiz items")&&!html.includes("Failed items (")&&!html.includes("Retry failed")&&!html.includes("Dismiss failed items"),"A refresh clears reports and retry actions.");
  assert(html.includes(source.title)&&html.includes(retained.summary)&&html.includes("Extracted knowledge points (1)"),"Source and accepted knowledge remain visible.");page.dispose();
  const active=renderLibraryRoute({...baseModel(),workflowStatuses:[{...partial,run:{...partial.run,state:"extraction-loop"}}]});assert(!active.includes("Dismiss failed items"),"Running jobs cannot be dismissed.");
+});
+
+Deno.test("Library cards expose escaped subject and topic before published knowledge exists", () => {
+  const model = baseModel();
+  const html = renderLibraryRoute({...model,collection:{...model.collection,items:[{...source,primarySubject:"music",sourceTopic:"Meter <script>"}]},knowledge:[]});
+  assert(html.includes("Main subject:</strong> Music &amp; Performing Arts"), "Cards show the source's main subject.");
+  assert(html.includes("Topic:</strong> Meter &lt;script>"), "Source metadata supplies an escaped topic while knowledge is processing.");
+  const unclassified = renderLibraryRoute({...model,knowledge:[]});
+  assert(unclassified.includes("Main subject:</strong> Unclassified") && unclassified.includes("Topic:</strong> Not classified yet"), "Missing classification is explicit without guessing a topic.");
+  const chip = renderProcessingStatus({workflowStatuses:[workflowStatus("extraction-loop")],escapeHtml:model.escapeHtml});
+  assert(chip.includes('<button type="button"') && chip.includes("data-library-processing-open"), "Processing navigation is keyboard operable.");
 });

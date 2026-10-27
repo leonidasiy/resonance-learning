@@ -16,10 +16,10 @@ export const ARTIFACT_BUDGETS = Object.freeze({
   }),
   aggregateJavascript: Object.freeze({
     label: "Aggregate JavaScript",
-    // Measured inline-link feature and persistent failed-item dismissal (2026-10-27).
+    // Measured processing navigation, source classification, and saved options (2026-10-27).
     // Initial and lazy-chunk limits remain unchanged.
-    rawBytes: 237_174,
-    gzipBytes: 78_568,
+    rawBytes: 240_527,
+    gzipBytes: 79_599,
   }),
   stylesheet: Object.freeze({
     label: "CSS",

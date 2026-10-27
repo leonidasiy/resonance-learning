@@ -771,7 +771,7 @@ export class D1SourceLibraryRepository {
   }
 }
 
-const SOURCE_CLASSIFICATION_COLUMN = "(SELECT sc.main_subject FROM source_classifications sc WHERE sc.owner_id = s.owner_id AND sc.source_id = s.source_id AND sc.source_revision = s.revision AND sc.status = 'classified') AS primary_subject";
+const SOURCE_CLASSIFICATION_COLUMN = "(SELECT sc.main_subject FROM source_classifications sc WHERE sc.owner_id = s.owner_id AND sc.source_id = s.source_id AND sc.source_revision = s.revision AND sc.status = 'classified') AS primary_subject, (SELECT sc.topic FROM source_classifications sc WHERE sc.owner_id = s.owner_id AND sc.source_id = s.source_id AND sc.source_revision = s.revision AND sc.status = 'classified') AS source_topic";
 const SOURCE_COLUMNS =
   `s.owner_id, s.source_id, s.submitted_url, s.canonical_url, s.title, s.description, s.adapter_json, s.identity_evidence_json, s.state, s.approved_at, s.updated_at, s.revision, ${SOURCE_CLASSIFICATION_COLUMN}, COALESCE(json_group_array(a.interest_area_id) FILTER (WHERE a.interest_area_id IS NOT NULL), '[]') AS interest_area_ids_json`;
 const SOURCE_FROM =
@@ -818,11 +818,12 @@ function knowledgeSearchFromRow(row) {
   return freeze({ knowledgeId: row.knowledge_id, sourceId: row.source_id, sourceTitle: row.source_title, summary: point.summary, sourceUrl: point.attribution.sourceUrl, evidenceAnchorIds: freeze(evidenceAnchorIds), questionLocked: row.question_locked === 1 });
 }
 
-/** @param {SourceRow & { readonly interest_area_ids_json: string, readonly primary_subject?: string | null }} row @returns {LibrarySource} */
+/** @param {SourceRow & { readonly interest_area_ids_json: string, readonly primary_subject?: string | null, readonly source_topic?: string | null }} row @returns {LibrarySource} */
 function sourceFromRow(row) {
   const adapter = JSON.parse(row.adapter_json);
   const identityEvidence = JSON.parse(row.identity_evidence_json);
   const interestAreaIds = JSON.parse(row.interest_area_ids_json);
+  if (row.source_topic != null && (typeof row.source_topic !== "string" || !row.source_topic.trim())) throw new TypeError("Stored source topic is invalid.");
   if (row.primary_subject != null && !isSubjectId(row.primary_subject)) throw new TypeError("Stored source classification is invalid.");
   if (
     typeof adapter !== "object" || adapter === null ||
@@ -843,6 +844,7 @@ function sourceFromRow(row) {
     title: row.title,
     description: row.description,
     primarySubject: row.primary_subject ?? null,
+    sourceTopic: row.source_topic ?? null,
     adapter:
       /** @type {import("../src/features/source-library/contracts.js").SourceAdapterContract} */ (adapter),
     interestAreaIds: freeze(/** @type {string[]} */ (interestAreaIds)),

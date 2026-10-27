@@ -421,6 +421,7 @@ function parseSource(value) {
   if (
     !isRecord(value) || ![value.id, value.ownerId, value.title].every(isNonEmptyText) ||
     (value.primarySubject != null && !isSubjectId(value.primarySubject)) ||
+    (value.sourceTopic != null && !isNonEmptyText(value.sourceTopic)) ||
     !isPublicHttpsUrl(value.submittedUrl) || !isPublicHttpsUrl(value.canonicalUrl) ||
     typeof value.description !== "string" || !isRecord(value.adapter) ||
     ![value.adapter.id, value.adapter.version, value.adapter.granularity].every(isNonEmptyText) ||

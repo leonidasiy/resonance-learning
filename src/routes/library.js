@@ -17,6 +17,7 @@ import { SUBJECTS, isSubjectId } from "../features/knowledge-subjects/public.js"
  *   readonly query: string,
  *   readonly subject?: string | null,
  *   readonly searchScope?: SourceSearchScope,
+ *   readonly externalProcessingAllowed?: boolean,
  *   readonly pendingSourceId: string | null,
  *   readonly message: string | null
  * }} SourceCollectionModel
@@ -59,7 +60,7 @@ function renderCollection(model) {
   const escapeHtml = model.escapeHtml;
   const searchScope = collection.searchScope ?? "knowledge";
   const searchingKnowledge = searchScope === "knowledge" && collection.query.trim() !== "";
-  const search = shellMarkup(2, searchScope === "sources" ? "selected" : "", searchScope === "knowledge" ? "selected" : "", escapeHtml(collection.query), searchScope === "knowledge" ? shellMarkup(21) : shellMarkup(22));
+  const search = shellMarkup(2, searchScope === "sources" ? "selected" : "", searchScope === "knowledge" ? "selected" : "", escapeHtml(collection.query), searchScope === "knowledge" ? shellMarkup(21) : shellMarkup(22), collection.externalProcessingAllowed ? " checked" : "");
   if (collection.state === "loading" && collection.items.length === 0) {
     return shellMarkup(3, search, searchingKnowledge ? shellMarkup(23) : "Opening sources", searchingKnowledge ? shellMarkup(24) : shellMarkup(25));
   }
@@ -147,7 +148,11 @@ function renderSource(model, source) {
   const extracted = workflowStatus?.run?.state === "completed" || !progress && knowledge.length > 0
     ? shellMarkup(19, sourceId, knowledge.length, knowledge.length ? shellMarkup(52, knowledge.map(point => shellMarkup(51, escapeHtml(point.summary))).join("")) : shellMarkup(53))
     : "";
-  return shellMarkup(20, sourceId, sourceId, sourceId, escapeHtml(source.title), escapeHtml(source.origin==="private-document"?"Uploaded material":new URL(source.canonicalUrl).hostname), formatDate(source.approvedAt), escapeHtml(source.description), extracted + workflowNotice + upload, workflowRetry + dismiss + workflowCancel, escapeHtml(sourceHref(source.canonicalUrl)), sourceId, source.revision, pending ? "disabled" : "", pending ? "Please wait..." : "Remove source");
+  const subjects = librarySourceSubjects(source, knowledge);
+  const subjectLabel = subjects.map(id => SUBJECTS.find(subject => subject.id === id)?.label ?? "Unclassified").join(", ");
+  const topic = source.sourceTopic ?? knowledge.find(point => point.sourceTopic)?.sourceTopic ?? "Not classified yet";
+  const classification = shellMarkup(92, escapeHtml(subjectLabel), escapeHtml(topic));
+  return shellMarkup(20, sourceId, sourceId, sourceId, escapeHtml(source.title), escapeHtml(source.origin==="private-document"?"Uploaded material":new URL(source.canonicalUrl).hostname), formatDate(source.approvedAt), escapeHtml(source.description), classification + extracted + workflowNotice + upload, workflowRetry + dismiss + workflowCancel, escapeHtml(sourceHref(source.canonicalUrl)), sourceId, source.revision, pending ? "disabled" : "", pending ? "Please wait..." : "Remove source");
 }
 
 /** @param {WorkflowSourceStatus|null} status @param {(value:string)=>string} escapeHtml */
