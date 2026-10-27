@@ -33,6 +33,12 @@ export function exhaustedQuizTechnicalFailure(error) {
   return /^(KnowledgeModel(Timeout|Cancelled|Unavailable|ResponseReadFailed|ResponseInvalid|ResponseDuplicateKey)|WorkflowAgentAgentOutputInvalid|WorkflowStageCallUncertain|QuizDraftSchemaInvalid|QuizEvaluatorOutputInvalid|QuizGeneratorFailed|QuizEvaluatorFailed)$/u
     .test(error.kind);
 }
+/** @param {unknown} value */
+export function exhaustedQuizQualityFailure(value){
+  return record(value)&&value.qualityAttemptsExhausted===true&&value.qualityAttempts===4&&isQuizQualityFailureKind(value.kind);
+}
+/** @param {unknown} kind */
+export function isQuizQualityFailureKind(kind){return ['QuizScoreBelowThreshold','QuizDraftUngrounded','QuizDuplicate'].includes(typeof kind==='string'?kind:'');}
 /** @param {import('./knowledge-workflow-d1.js').D1DatabasePort} database @param {{ownerId:string,runId:string}} scope
  * @returns {Promise<{ok:true,value:readonly FailedQuizItem[]}|{ok:false,error:{kind:string}}>} */
 export async function readFailedQuizItems(database, scope) {
@@ -51,12 +57,12 @@ export async function readFailedQuizItems(database, scope) {
         item = record(parsed) && parsed.ok === true ? parsed.value : null;
       if (
         !record(row) || !record(item) ||
-        !exhaustedQuizTechnicalFailure({
+        !(isQuizQualityFailureKind(item.failureKind)||exhaustedQuizTechnicalFailure({
           ...item,
           kind: item.failureKind,
           technicalRetriesExhausted: true,
           technicalAttempts: 4,
-        }) || !text(item.knowledgeId) || !text(item.summary) ||
+        })) || !text(item.knowledgeId) || !text(item.summary) ||
         !text(item.failureKind) ||
         !(item.causeKind === undefined || text(item.causeKind)) ||
         !(item.status === undefined ||

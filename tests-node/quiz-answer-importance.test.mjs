@@ -27,7 +27,7 @@ test('generator, reviewer and schema share contextual importance criteria withou
  assert.match(questionGeneratorPrompt,/When previousDraft is supplied, repair that exact pair using feedback/);
  assert.match(quizAnswerQualityInstruction,/optional coverage of another relationship is not a reason to reject a sound single-target question/);
  assert.match(questionEvaluatorPrompt,/For EVERY canonical answer, state in reasons/);
- assert.match(questionEvaluatorPrompt,/Any weak target or filler distractor requires a score below 8/);
+ assert.match(questionEvaluatorPrompt,/Any weak target or filler distractor requires a score below 7/);
  assert.match(questionEvaluatorPrompt,/not knowledgeGroundingProblems/);
 });
 

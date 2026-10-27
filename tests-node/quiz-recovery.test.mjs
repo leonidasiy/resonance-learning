@@ -428,7 +428,7 @@ test("fresh native quiz criticism requires typed knowledge grounding while legac
   for(const invalid of [null,"safe",{},[null],[""]])assert.equal(isKnowledgeQuizEvaluation({...legacy,knowledgeGroundingProblems:invalid},{summary:"Synthetic support."}),false);
   assert.equal(questionEvaluationSchema.name,"quiz_evaluation_v3");
   assert(questionEvaluationSchema.schema.required.includes("knowledgeGroundingProblems"));
-  assert.match(questionEvaluatorPrompt,/paired-question-evaluator-v11/);
+  assert.match(questionEvaluatorPrompt,/paired-question-evaluator-v13/);
   assert.match(questionEvaluatorPrompt,/Quiz regeneration changes only the quiz, never that retained summary/);
 });
 

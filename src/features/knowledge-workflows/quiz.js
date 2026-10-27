@@ -2,7 +2,7 @@ import {waitForTransientRetry} from './retry.js';
 // @ts-check
 import {AgentExecutionBoundaryFailure} from './harness.js';
 
-import { quizAnswerQualityInstruction, limitChoiceOptions, normalizeAssembledQuizPairLimits, validateAssembledQuizPair } from "./quiz-pair.js";
+import { QUIZ_ACCEPTANCE_SCORE, quizAnswerQualityInstruction, limitChoiceOptions, normalizeAssembledQuizPairLimits, validateAssembledQuizPair } from "./quiz-pair.js";
 
 /** @template T, E @typedef {{ readonly ok: true, readonly value: T } | { readonly ok: false, readonly error: E }} Result */
 /** @typedef {import("./extraction.js").KnowledgePoint} KnowledgePoint */
@@ -324,18 +324,18 @@ export function createQuizActorCritic(dependencies) {
             previousDraft = null;
             continue;
           }
-          const qualityRubric = "10 means the draft tests the key concept precisely; 1 means irrelevant or too general. " + quizAnswerQualityInstruction + " In reasons, justify the distinct central understanding tested by EVERY canonical answer. Score below 8 for any weak, incidental or overlapping target or filler distractor; higher answer counts earn no credit. Identify exact weak target text in feedback. Supported but low-value wording is a quiz quality fault, not a knowledgeGroundingProblems source fault.";
+          const qualityRubric = "10 means the draft tests the key concept precisely; 1 means irrelevant or too general. " + quizAnswerQualityInstruction + " In reasons, justify the distinct central understanding tested by EVERY canonical answer. Score below " + QUIZ_ACCEPTANCE_SCORE + " for any weak, incidental or overlapping target or filler distractor; higher answer counts earn no credit. Identify exact weak target text in feedback. Supported but low-value wording is a quiz quality fault, not a knowledgeGroundingProblems source fault.";
           let evaluationRubric=qualityRubric;
           const evaluated=await technicalCall(technicalAttempt=>dependencies.reviewer.evaluate({draft,knowledge:{id:knowledge.id,summary:knowledge.summary,evidenceAnchors:knowledge.evidenceAnchors},deterministicValidation:{ok:true},attempt,technicalAttempt,rubric:evaluationRubric}),value=>validEvaluation(value)?{ok:true,value}:{ok:false,error:{kind:"QuizEvaluatorOutputInvalid"}},"QuizEvaluatorFailed",failure=>{
             if(record(failure)&&["QuizEvaluatorOutputInvalid","KnowledgeModelResponseInvalid","KnowledgeModelResponseDuplicateKey"].includes(String(failure.kind)))evaluationRubric=qualityRubric+" Previous response failed format validation. Return the required JSON schema exactly: score is an integer from 1 to 10; reasons is a nonempty string array; feedback is a string; groundingProblems is a string array; knowledgeGroundingProblems is an array of typed claim/kind/reason objects citing an exact current summary claim, or [] when there is no point-level fault. Re-evaluate this unchanged draft using the same quality standards.";
           },dependencies.technicalRetries!==false,onRetry);
           if(!evaluated.ok)return fail(evaluated.error,dependencies,command.runId,knowledge.id);
           const evaluation = evaluated.value;
-          lastFailure = evaluation.knowledgeGroundingProblems?.length ? "QuizKnowledgeUngrounded" : evaluation.score >= 8 && evaluation.groundingProblems.length === 0 ? null : evaluation.score >= 8 ? "QuizDraftUngrounded" : "QuizScoreBelowThreshold";
+          lastFailure = evaluation.knowledgeGroundingProblems?.length ? "QuizKnowledgeUngrounded" : evaluation.score >= QUIZ_ACCEPTANCE_SCORE && evaluation.groundingProblems.length === 0 ? null : evaluation.score >= QUIZ_ACCEPTANCE_SCORE ? "QuizDraftUngrounded" : "QuizScoreBelowThreshold";
           const saved = await persistAttempt(dependencies.repository, { ownerId: command.ownerId, runId: command.runId, knowledgeId: knowledge.id, attempt, draftId: draft.id, score: evaluation.score, feedback: evaluation.feedback, failureKind: lastFailure, createdAt: dependencies.now() }, dependencies, command.runId, knowledge.id);
           if (!saved.ok) return saved;
           if (lastFailure === "QuizKnowledgeUngrounded") break;
-          if (evaluation.score >= 8 && evaluation.groundingProblems.length === 0) {
+          if (evaluation.score >= QUIZ_ACCEPTANCE_SCORE && evaluation.groundingProblems.length === 0) {
             if(dependencies.beforeGenerate!==undefined) {
               const allowed=await dependencies.beforeGenerate(knowledge);
               if(!allowed.ok)return fail({kind:"QuizGeneratorFailed",causeKind:allowed.error.kind},dependencies,command.runId,knowledge.id);
@@ -364,7 +364,8 @@ export function createQuizActorCritic(dependencies) {
           dispositions.push(freeze({ knowledgeId: knowledge.id, status: "accepted", publicationStatus: acceptedPublicationStatus, attempts, failureKind: null, restrictedUntil: null }));
           continue;
         }
-        try {
+        // A failed quiz does not invalidate independently verified knowledge.
+        if(lastFailure==="QuizKnowledgeUngrounded"||lastFailure==="QuizSeeLessOften")try {
           const discarded = await dependencies.repository.discard({ ownerId: command.ownerId, runId: command.runId, knowledgeId: knowledge.id, reason: "no-meaningful-quiz" });
           if (!discarded.ok) return fail({ kind: "QuizPurgeFailed" }, dependencies, command.runId, knowledge.id);
         } catch (error) { return fail({ kind: "QuizPurgeFailed" }, dependencies, command.runId, knowledge.id); }

@@ -13,7 +13,7 @@ function seedRun(db){db.prepare("INSERT INTO library_sources (owner_id,source_id
 function port(db){return {prepare(sql){let values=[];return {bind(...args){values=args;return this;},async first(){return db.prepare(sql).get(...values)??null;},async all(){return {success:true,results:db.prepare(sql).all(...values)};},async run(){return {success:true,meta:{changes:Number(db.prepare(sql).run(...values).changes)}};}};},async batch(statements){db.exec('BEGIN');try{const values=[];for(const statement of statements)values.push(await statement.run());db.exec('COMMIT');return values;}catch(error){db.exec('ROLLBACK');throw error;}}};}
 const point=id=>({id,sourceId:'source',sourceRevision:1,summary:`The supported relationship for ${id}.`,normalizedHash:id,evidenceAnchors:[{url:'https://example.test/source',selector:'#evidence'}],coverageGoalIds:[],mediaCandidates:[],attribution:{sourceUrl:'https://example.test/source'},extractionVersion:'v1'});
 
-test('fourth quiz attempt persists; exhaustion removes knowledge and quiz from the final library',async()=>{
+test('fourth quiz attempt persists; exhaustion retains knowledge without publishing a quiz',async()=>{
  const db=new DatabaseSync(':memory:');
  try{
   for(const name of (await readdir(migrationDirectory)).filter(name=>name.endsWith('.sql')).sort())db.exec(await readFile(new URL(name,migrationDirectory),'utf8'));
@@ -22,17 +22,17 @@ test('fourth quiz attempt persists; exhaustion removes knowledge and quiz from t
   const points=[point('kept'),point('dropped')];
   for(const value of points)assert.equal((await content.appendKnowledgePoint(value,'owner','run',now())).ok,true);
   const attempts=[];
-  const actor=createQuizActorCritic({maxAttempts:QUIZ_MAX_ATTEMPTS,repository,now,logger:()=>{},generator:{async generate({knowledge,attempt}){attempts.push({id:knowledge.id,attempt});return {ok:true,value:{id:`draft-${knowledge.id}-${attempt}`,knowledgeId:knowledge.id,knowledgeRevision:1,kind:'single-choice',prompt:`Which supported relationship applies to ${knowledge.id}?`,options:['A','B'],answer:'A',citedEvidenceUrls:['https://example.test/source']}};}},reviewer:{async evaluate({knowledge,attempt}){return {ok:true,value:{score:knowledge.id==='kept'&&attempt===4?9:7,reasons:['Grounded'],feedback:'Clarify the distinction.',groundingProblems:[]}};}}});
+  const actor=createQuizActorCritic({maxAttempts:QUIZ_MAX_ATTEMPTS,repository,now,logger:()=>{},generator:{async generate({knowledge,attempt}){attempts.push({id:knowledge.id,attempt});return {ok:true,value:{id:`draft-${knowledge.id}-${attempt}`,knowledgeId:knowledge.id,knowledgeRevision:1,kind:'single-choice',prompt:`Which supported relationship applies to ${knowledge.id}?`,options:['A','B'],answer:'A',citedEvidenceUrls:['https://example.test/source']}};}},reviewer:{async evaluate({knowledge,attempt}){return {ok:true,value:{score:knowledge.id==='kept'&&attempt===4?9:6,reasons:['Grounded'],feedback:'Clarify the distinction.',groundingProblems:[]}};}}});
   const result=await actor.run({ownerId:'owner',runId:'run',points});
   assert.equal(result.ok,true,JSON.stringify(result));
   assert.equal(attempts.length,8);
-  assert.deepEqual(db.prepare('SELECT knowledge_id FROM extraction_knowledge_points').all().map(row=>row.knowledge_id),['kept']);
+  assert.deepEqual(db.prepare('SELECT knowledge_id FROM extraction_knowledge_points').all().map(row=>row.knowledge_id),['dropped','kept']);
   assert.deepEqual(db.prepare('SELECT knowledge_id,attempt_number FROM knowledge_workflow_quizzes').all().map(row=>({...row})),[{knowledge_id:'kept',attempt_number:4}]);
   assert.deepEqual(await repository.findPublished({ownerId:'owner',runId:'run',knowledgeId:'kept'}),{ok:true,value:{status:'published',attempt:4}});
   assert.equal(db.prepare("SELECT count(*) AS n FROM learning_generation_units WHERE unit_json LIKE '%dropped%'").get().n,0);
   assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quiz_attempts WHERE knowledge_id='kept'").get().n,4);
   assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quiz_retry_attempts WHERE knowledge_id='kept'").get().n,4);
-  assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_purge_tombstones WHERE knowledge_id='dropped' AND reason='no-meaningful-quiz'").get().n,1);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_purge_tombstones WHERE knowledge_id='dropped' AND reason='no-meaningful-quiz'").get().n,0);
   assert.equal(result.value.statistics.quizDropRate,0.5);
   assert.equal(result.value.statistics.retryRate,1);
   assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
@@ -75,11 +75,11 @@ test('quiz statistics preserve an earlier dropped point through interruption and
    if(knowledge.id==='kept'&&interrupted)return {ok:false,error:{kind:'ProviderUnavailable'}};
    generations++;
    return stageRepository.run(run,`question-generator:quiz-generator-${knowledge.id}-${attempt}:signature`,'signature',async()=>({ok:true,value:{id:`draft-${knowledge.id}-${attempt}`,knowledgeId:knowledge.id,knowledgeRevision:1,kind:'single-choice',prompt:`Which supported relationship applies to ${knowledge.id}?`,options:['A','B'],answer:'A',citedEvidenceUrls:['https://example.test/source']}}));
-  }},reviewer:{async evaluate({knowledge,attempt}){return {ok:true,value:{score:knowledge.id==='kept'&&attempt===2?9:7,reasons:['Grounded'],feedback:'Clarify.',groundingProblems:[]}};}}});
+  }},reviewer:{async evaluate({knowledge,attempt}){return {ok:true,value:{score:knowledge.id==='kept'&&attempt===2?9:6,reasons:['Grounded'],feedback:'Clarify.',groundingProblems:[]}};}}});
   const initial=await runReviewedQuizPoints({actor,stageRepository,run,points});
   assert.equal(initial.ok,false);
   assert.equal(generations,4);
-  assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points WHERE knowledge_id='dropped'").get().n,0);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points WHERE knowledge_id='dropped'").get().n,1);
   interrupted=false;
   const remaining=await content.listKnowledgePoints({ownerId:'owner',runId:'run',sourceId:'source',sourceRevision:1});
   assert.equal(remaining.ok,true);
@@ -92,5 +92,21 @@ test('quiz statistics preserve an earlier dropped point through interruption and
   assert.deepEqual(readReviewedQuizStatistics({sqlite:db,run,knowledgeIds,outputs}),report);
   db.prepare("DELETE FROM knowledge_workflow_stages WHERE stage_key='reviewed-benchmark-quiz-disposition:dropped'").run();
   assert.throws(()=>readReviewedQuizStatistics({sqlite:db,run,knowledgeIds,outputs}),/ReviewedQuizStatisticsUnavailable/);
+ }finally{db.close();}
+});
+
+
+test('score-seven migration preserves rows and cancellation fences and rejects six',async()=>{
+ const db=new DatabaseSync(':memory:');try{
+  for(const name of (await readdir(migrationDirectory)).filter(n=>n.endsWith('.sql')&&!n.startsWith('0031_')).sort())db.exec(await readFile(new URL(name,migrationDirectory),'utf8'));
+  seedRun(db);db.exec("INSERT INTO knowledge_workflow_quizzes VALUES ('owner','quiz','run','point','source',1,'fingerprint','{}',9,4,'published','date')");
+  const before=db.prepare('SELECT * FROM knowledge_workflow_quizzes').all();
+  db.exec(await readFile(new URL('0031_quiz_acceptance_seven.sql',migrationDirectory),'utf8'));
+  assert.deepEqual(db.prepare('SELECT * FROM knowledge_workflow_quizzes').all(),before);
+  db.exec('UPDATE knowledge_workflow_quizzes SET score=7');
+  assert.throws(()=>db.exec('UPDATE knowledge_workflow_quizzes SET score=6'),/CHECK constraint failed/);
+  db.exec("UPDATE knowledge_workflow_runs SET state='abandoned'");
+  assert.throws(()=>db.exec('UPDATE knowledge_workflow_quizzes SET score=8'),/WorkflowAttemptAbandoned/);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
  }finally{db.close();}
 });

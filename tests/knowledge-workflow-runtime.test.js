@@ -153,7 +153,7 @@ Deno.test("live quiz prompts enumerate the exact generator and evaluator contrac
     assertEquals(prompt.includes("Mandarin/Chinese"), true);
     assertEquals(prompt.includes("never translate"), true);
   }
-  assertEquals(questionGeneratorPrompt.includes("discards the point"), true);
+  assertEquals(questionGeneratorPrompt.includes("retains independently verified knowledge"), true);
   assertEquals(questionGeneratorPrompt.includes("one correct key and one blank"), true);
   assertEquals(questionGeneratorPrompt.includes("not complete explanatory statements"), true);
   assertEquals(questionEvaluatorPrompt.includes("one non-empty string"), true);

@@ -3,7 +3,7 @@
 import { normalizeQuizDraftLimits, QUIZ_MAX_ATTEMPTS } from "../src/features/knowledge-workflows/quiz.js";
 import { quoteHash } from "./webpage-citations.js";
 import { parseClassification } from "../src/features/knowledge-subjects/public.js";
-import { validateAssembledQuizPair } from "../src/features/knowledge-workflows/quiz-pair.js";
+import { QUIZ_ACCEPTANCE_SCORE, validateAssembledQuizPair } from "../src/features/knowledge-workflows/quiz-pair.js";
 
 /** @import { ExtractionScratchpad, KnowledgePoint } from "../src/features/knowledge-workflows/extraction.js" */
 /** @import { QuizAttempt, QuizRepository, QuestionDraft } from "../src/features/knowledge-workflows/quiz.js" */
@@ -332,7 +332,7 @@ export class D1QuizRepository {
     if (!isDraft(limited)) return { ok: false, error: { kind: "QuizPublicationFailed" } };
     command = { ...command, draft: limited };
     const fingerprint = draftFingerprint(command?.draft);
-    if (!text(command?.ownerId) || !text(command.runId) || !isKnowledgePoint(command.knowledge) || !isDraft(command.draft) || fingerprint === null || !Number.isInteger(command.score) || command.score < 8 || command.score > 10 || !positiveInteger(command.attempt) || (command.status !== "published" && command.status !== "pending-review")) return { ok: false, error: { kind: "QuizPublicationFailed" } };
+    if (!text(command?.ownerId) || !text(command.runId) || !isKnowledgePoint(command.knowledge) || !isDraft(command.draft) || fingerprint === null || !Number.isInteger(command.score) || command.score < QUIZ_ACCEPTANCE_SCORE || command.score > 10 || !positiveInteger(command.attempt) || (command.status !== "published" && command.status !== "pending-review")) return { ok: false, error: { kind: "QuizPublicationFailed" } };
     try {
       const createdAt = this.#now();
       if (!text(createdAt) || !Number.isFinite(Date.parse(createdAt))) return { ok: false, error: { kind: "QuizPublicationFailed" } };

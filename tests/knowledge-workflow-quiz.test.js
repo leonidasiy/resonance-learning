@@ -40,8 +40,8 @@ function setup() {
     reviewer: {
       async evaluate(command) {
         evaluatorCalls += 1;
-        const score = command.knowledge.id === "knowledge-a" ? (command.attempt === 1 ? 6 : 9) : 7;
-        return { ok: true, value: { score, reasons: ["Tests the cited concept."], feedback: score < 8 ? "Make the prompt more specific." : "Grounded and relevant.", groundingProblems: [] } };
+        const score = command.knowledge.id === "knowledge-a" ? (command.attempt === 1 ? 6 : 9) : 6;
+        return { ok: true, value: { score, reasons: ["Tests the cited concept."], feedback: score < 7 ? "Make the prompt more specific." : "Grounded and relevant.", groundingProblems: [] } };
       },
     },
     repository,
@@ -82,22 +82,21 @@ Deno.test("quiz actor-critic revises after feedback and continues sequentially",
   assertEquals(result.value.dispositions[1].attempts, 3);
   assertEquals(fixture.published.length, 1);
   assertEquals(fixture.restricted.length, 0);
-  assertEquals(fixture.purged.length, 1);
-  assertEquals(/** @type {{ readonly reason: string }} */ (fixture.purged[0]).reason, "no-meaningful-quiz");
+  assertEquals(fixture.purged.length, 0);
   assertEquals(fixture.generatorCalls, 5);
   assertEquals(fixture.evaluatorCalls, 5);
   assertEquals(fixture.attempts.filter((attempt) => attempt.knowledgeId === "knowledge-b").length, 3);
 });
 
-Deno.test("quiz gets three corrective retries, keeps final success and discards exhausted pairs", async () => {
+Deno.test("quiz gets three corrective retries, keeps final success and retains knowledge after exhausted pairs", async () => {
   const fixture=setup();
   /** @type {(string|null)[]} */ const feedback=[];
-  const actor=createQuizActorCritic({generator:{async generate({knowledge,attempt,feedback:previous}){feedback.push(previous);return {ok:true,value:{id:`draft-${knowledge.id}-${attempt}`,knowledgeId:knowledge.id,knowledgeRevision:knowledge.sourceRevision,kind:"single-choice",prompt:"Which relationship follows from the evidence?",options:["A","B"],answer:"A",citedEvidenceUrls:["https://example.test/a"]}};}},reviewer:{async evaluate({knowledge,attempt}){return {ok:true,value:{score:knowledge.id==="knowledge-a"&&attempt===4?9:7,reasons:["Evidence checked"],feedback:"Make the distinction explicit.",groundingProblems:[]}};}},repository:fixture.repository,now:()=>"2026-10-12T00:00:00.000Z",logger:()=>{},maxAttempts:QUIZ_MAX_ATTEMPTS});
+  const actor=createQuizActorCritic({generator:{async generate({knowledge,attempt,feedback:previous}){feedback.push(previous);return {ok:true,value:{id:`draft-${knowledge.id}-${attempt}`,knowledgeId:knowledge.id,knowledgeRevision:knowledge.sourceRevision,kind:"single-choice",prompt:"Which relationship follows from the evidence?",options:["A","B"],answer:"A",citedEvidenceUrls:["https://example.test/a"]}};}},reviewer:{async evaluate({knowledge,attempt}){return {ok:true,value:{score:knowledge.id==="knowledge-a"&&attempt===4?9:6,reasons:["Evidence checked"],feedback:"Make the distinction explicit.",groundingProblems:[]}};}},repository:fixture.repository,now:()=>"2026-10-12T00:00:00.000Z",logger:()=>{},maxAttempts:QUIZ_MAX_ATTEMPTS});
   const result=await actor.run({ownerId:"owner-a",runId:"run-four",points:points()});
   if(!result.ok)throw new Error(result.error.kind);
   assertEquals(fixture.attempts.length,8);
   assertEquals(fixture.published.length,1);
-  assertEquals(fixture.purged.length,1);
+  assertEquals(fixture.purged.length,0);
   assertEquals(result.value.dispositions[0].status,"accepted");
   assertEquals(result.value.dispositions[0].attempts,4);
   assertEquals(result.value.dispositions[1].status,"abandoned");
@@ -167,7 +166,7 @@ Deno.test("quiz actor-critic rejects ungrounded drafts before evaluator dispatch
     assertEquals(result.value.dispositions[0].failureKind, "QuizDraftUngrounded");
     assertEquals(fixture.attempts.length, 3);
     assertEquals(fixture.restricted.length, 0);
-    assertEquals(fixture.purged.length, 1);
+    assertEquals(fixture.purged.length, 0);
   }
 });
 
@@ -299,7 +298,7 @@ Deno.test("quiz actor-critic abandons a duplicate knowledge point without evalua
   const result = await actor.run({ ownerId: "owner-a", runId: "run-duplicate", points: [points()[0]] });
   assertEquals(result.ok, true);
   assertEquals(fixture.published.length, 0);
-  assertEquals(fixture.purged.length, 1);
+  assertEquals(fixture.purged.length, 0);
 });
 
 Deno.test("quiz actor-critic abandons a duplicate publication race and continues", async () => {
@@ -316,14 +315,14 @@ Deno.test("quiz actor-critic abandons a duplicate publication race and continues
   assertEquals(result.ok, true);
   if (result.ok) assertEquals(result.value.dispositions[0].failureKind, "QuizDuplicate");
   assertEquals(fixture.restricted.length, 0);
-  assertEquals(fixture.purged.length, 1);
+  assertEquals(fixture.purged.length, 0);
 });
 
 Deno.test("quiz actor-critic reports discard persistence failure", async () => {
   const fixture = setup();
   const actor = createQuizActorCritic({
-    generator: { async generate() { return { ok: false, error: { kind: "QuizDuplicate" } }; } },
-    reviewer: { async evaluate() { throw new Error("must not evaluate"); } },
+    generator: { async generate() { return { ok: true, value: { id:"unsafe",knowledgeId:"knowledge-a",knowledgeRevision:1,kind:"single-choice",prompt:"Which?",options:["A","B"],answer:"A",citedEvidenceUrls:["https://example.test/a"] } }; } },
+    reviewer: { async evaluate() { return {ok:true,value:{score:9,reasons:["Source conflict"],feedback:"Unsupported current claim.",groundingProblems:[],knowledgeGroundingProblems:["Summary knowledge-a is absent from the source."]}}; } },
     repository: { ...fixture.repository, async discard() { return { ok: false, error: { kind: "database-unavailable" } }; } },
     now: () => "2026-08-13T00:00:00.000Z",
     logger: () => {},

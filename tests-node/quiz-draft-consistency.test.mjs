@@ -117,7 +117,7 @@ test("fresh prompt describes final pair rebuilding and substantive source confli
     questionGeneratorPrompt,
     /rebuild all four arrays and the blank prompt together/,
   );
-  assert.match(questionEvaluatorPrompt, /paired-question-evaluator-v11/);
+  assert.match(questionEvaluatorPrompt, /paired-question-evaluator-v13/);
   assert.match(
     questionEvaluatorPrompt,
     /source-conflicting requires a substantive opposing meaning/,
@@ -469,7 +469,7 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
           points: [point],
         });
       if(malformed){assert.equal(result.ok,false);assert.equal(result.error.kind,"QuizDraftSchemaInvalid");assert.equal(result.error.technicalRetriesExhausted,true);assert.equal(result.error.technicalAttempts,4);assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quizzes").get().n,0);assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points").get().n,1);assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quiz_attempts").get().n,0);}
-      else if(importanceRejected){assert(result.ok,JSON.stringify({result,wireFailure}));assert.equal(result.value.dispositions[0].status,'abandoned');assert.equal(result.value.dispositions[0].failureKind,'QuizScoreBelowThreshold');assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quizzes").get().n,0);assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points").get().n,0);}
+      else if(importanceRejected){assert(result.ok,JSON.stringify({result,wireFailure}));assert.equal(result.value.dispositions[0].status,'abandoned');assert.equal(result.value.dispositions[0].failureKind,'QuizScoreBelowThreshold');assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quizzes").get().n,0);assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points").get().n,1);}
       else {assert(result.ok,JSON.stringify({result,wireFailure}));assert.equal(result.value.dispositions[0].status,"accepted");}
       assert.deepEqual([drafts, critics, importanceReviews], malformed ? [4, 0, 0] : importanceRejected ? [4, 0, 4] : [1, 1, 1]);
       const rows = db.prepare(
