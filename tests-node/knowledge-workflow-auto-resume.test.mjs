@@ -50,6 +50,22 @@ test('elapsed extraction deadlines continue after two minutes with checkpoints a
   }finally{f.db.close();}
 });
 
+test('stopped database states resume when Cloudflare reports a pending event wait as running',async()=>{
+  for(const phase of ['retryable-failure','awaiting-time-limit-decision']){
+    const f=await fixture('extraction-loop');try{
+      f.advanceTime(30*60_000);
+      f.unwrap(await f.service.advance({ownerId:'owner-a',runId:f.run.runId,expectedRevision:f.run.revision,nextState:phase,...(phase==='retryable-failure'?{failureKind:'WebpageImageRunDeadlineExceeded'}:{decisionRequired:'time-limit'})}));
+      f.setStatus('running');f.advanceTime(119_999);
+      assert.deepEqual(await f.tick(),{ok:true,value:0});
+      f.advanceTime(1);assert.deepEqual(await f.tick(),{ok:true,value:1});
+      const resumed=await f.read();assert.equal(resumed.state,'extraction-loop');assert.deepEqual(resumed.counts,f.run.counts);
+      assert.equal(Date.parse(resumed.extractionDeadlineAt)-Date.parse(f.dependencies.now()),30*60_000);
+      assert.deepEqual(f.counts(),{events:1,restarts:0});
+      assert.deepEqual(await f.tick(),{ok:true,value:0});assert.deepEqual(f.counts(),{events:1,restarts:0});
+    }finally{f.db.close();}
+  }
+});
+
 test('user pauses, cancellations, running executions and disabled sources never auto-resume',async()=>{
   for(const scenario of ['paused','abandoned','running','disabled','platform-paused']){
     const f=await fixture('extraction-loop');try{

@@ -52,7 +52,8 @@ export async function resumeInterruptedKnowledgeWorkflows({database,binding,owne
         if(run.failureKind==='KnowledgeModelPaymentRequired')continue;
         if(currentTime-Date.parse(run.updatedAt)<120_000)continue;
         if(run.state==='awaiting-time-limit-decision'&&(run.extractionDeadlineAt===null||currentTime<Date.parse(run.extractionDeadlineAt)+120_000))continue;
-        if(!['waiting','errored','complete'].includes(status))continue;
+        // A pending waitForEvent can still report running; the persisted stopped state authorizes its resume event.
+        if(!['running','waiting','errored','complete'].includes(status))continue;
         const command={ownerId,runId:run.runId,expectedRevision:run.revision,action:'resume',idempotencyKey:`auto-resume:${crypto.randomUUID()}`};
         operation='resume-control';
         const controlled=await service.control(command);
