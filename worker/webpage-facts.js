@@ -1,4 +1,5 @@
 // @ts-check
+import { requestCoveredWebpageFacts } from './webpage-coverage.js';
 import { captureCitationSources } from './webpage-citations.js';
 import { isInlineLinks } from '../src/features/knowledge-workflows/inline-links.js';
 export { quoteHash } from './webpage-citations.js';
@@ -7,7 +8,7 @@ import { isKnowledgeCandidate } from '../src/features/knowledge-workflows/extrac
 /** @typedef {import('../src/features/knowledge-workflows/extraction.js').KnowledgeCandidate} KnowledgeCandidate */
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:{kind:string}}} Result */
 /** @typedef {{taskId:string,systemPrompt:string,input:unknown,maxOutputTokens:number,phase?:WebpagePhase,responseSchema?:import("./knowledge-workflow-model.js").KnowledgeResponseSchema,attachments?:readonly import('./knowledge-workflow-model.js').KnowledgeModelAttachment[]}} SourceCommand */
-/** @typedef {{taskId:string,input:unknown,maxOutputTokens:number,structuredOutput?:boolean,normalizeClaims?:boolean,reviewUsefulness?:boolean,deferQualityReview?:boolean,attemptPolicy?:WebpageAttemptPolicy,generate:(command:SourceCommand)=>Promise<Result<Record<string,unknown>>>,logger:(entry:{event:string,failureKind?:string})=>void}} FactRequest */
+/** @typedef {{taskId:string,input:unknown,maxOutputTokens:number,requireCoverage?:boolean,structuredOutput?:boolean,normalizeClaims?:boolean,reviewUsefulness?:boolean,deferQualityReview?:boolean,attemptPolicy?:WebpageAttemptPolicy,generate:(command:SourceCommand)=>Promise<Result<Record<string,unknown>>>,logger:(entry:{event:string,failureKind?:string})=>void}} FactRequest */
 /** @typedef {'extraction'|'normalization'|'grounding'|'match'|'verify'} WebpagePhase */
 /** @typedef {{extraction:number,normalization?:number,grounding:number,match:number,verify:number,requests:number}} WebpageAttemptCaps */
 /** @typedef {{dispatch:(command:SourceCommand,generate:FactRequest['generate'])=>Promise<Result<Record<string,unknown>>>}} WebpageAttemptPolicy */
@@ -134,7 +135,7 @@ export function webpageFactsSchema(sources,goals) {
 }
 /** @typedef {'WebpageCandidateInvalid'|'WebpageCandidateEvidenceInvalid'|'WebpageCandidateGroundingRejected'|'WebpageCandidateUsefulnessRejected'|'WebpageFactsEmpty'} WebpagePartialIssueKind */
 /** @typedef {{readonly kind:WebpagePartialIssueKind,readonly candidateIndex:number|null,readonly normalizedHash:string|null,readonly provenance:{readonly url:string,readonly blockIds:readonly string[]}}} WebpagePartialIssue */
-/** @typedef {{readonly candidates:readonly KnowledgeCandidate[],readonly notes:string,readonly status:'complete'|'partial'|'empty',readonly partialIssues:readonly WebpagePartialIssue[]}} WebpageFactsResult */
+/** @typedef {{readonly candidates:readonly KnowledgeCandidate[],readonly notes:string,readonly status:'complete'|'partial'|'empty',readonly partialIssues:readonly WebpagePartialIssue[],readonly blockCoverage?:readonly import('./webpage-coverage.js').BlockCoverage[]}} WebpageFactsResult */
 /** @param {unknown} value @returns {value is WebpagePartialIssue} */
 export function isWebpagePartialIssue(value) {
   return record(value)&&Object.keys(value).sort().join(',')==='candidateIndex,kind,normalizedHash,provenance'&&['WebpageCandidateInvalid','WebpageCandidateEvidenceInvalid','WebpageCandidateGroundingRejected','WebpageCandidateUsefulnessRejected','WebpageFactsEmpty'].includes(typeof value.kind==='string'?value.kind:'')&&(value.kind==='WebpageFactsEmpty'?value.candidateIndex===null:Number.isSafeInteger(value.candidateIndex)&&Number(value.candidateIndex)>=0)&&(value.normalizedHash===null||text(value.normalizedHash))&&record(value.provenance)&&Object.keys(value.provenance).sort().join(',')==='blockIds,url'&&text(value.provenance.url)&&URL.canParse(value.provenance.url)&&new URL(value.provenance.url).protocol==='https:'&&!new URL(value.provenance.url).username&&!new URL(value.provenance.url).password&&Array.isArray(value.provenance.blockIds)&&value.provenance.blockIds.every(text);
@@ -150,6 +151,7 @@ export async function requestWebpageFacts(dependencies) {
   if(!text(dependencies?.taskId)||typeof dependencies.generate!=='function'||typeof dependencies.logger!=='function'||(dependencies.structuredOutput!==undefined&&typeof dependencies.structuredOutput!=='boolean')||(dependencies.normalizeClaims!==undefined&&typeof dependencies.normalizeClaims!=='boolean')||(dependencies.reviewUsefulness!==undefined&&typeof dependencies.reviewUsefulness!=='boolean')||(dependencies.deferQualityReview!==undefined&&typeof dependencies.deferQualityReview!=='boolean')||(dependencies.attemptPolicy!==undefined&&typeof dependencies.attemptPolicy.dispatch!=='function')||!Number.isSafeInteger(dependencies.maxOutputTokens)||dependencies.maxOutputTokens<=0||!record(input)||!isWebpageEvidence(input.evidence)||input.url!==input.evidence.url||!Array.isArray(input.coverageGoals)||input.coverageGoals.some(g=>!record(g)||!text(g.id))) return {ok:false,error:{kind:'WebpageFactsCommandInvalid'}};
   for(const key of ['lessOften','previousKnowledge'])if(input[key]!==undefined&&(!Array.isArray(input[key])||!input[key].every(item=>record(item)&&text(item.id)&&text(item.summary))))return {ok:false,error:{kind:'WebpageFactsCommandInvalid'}};
   const evidence=Object.freeze({...input.evidence}), goals=Object.freeze(/** @type {{id:string}[]} */(input.coverageGoals).map(g=>Object.freeze({...g})));
+  if(dependencies.requireCoverage===true&&evidence.blocks.length)return requestCoveredWebpageFacts(dependencies,requestWebpageFacts);
   const policy=dependencies.attemptPolicy??createWebpageAttemptPolicy({extraction:1,grounding:1,normalization:dependencies.normalizeClaims?1:0,match:0,verify:0,requests:dependencies.normalizeClaims?3:2});
   dependencies.logger({event:'webpage-facts-entry'});
   if(evidence.blocks.length===0) return {ok:true,value:{candidates:[],notes:'No source-written educational text available.',status:'empty',partialIssues:[{kind:'WebpageFactsEmpty',candidateIndex:null,normalizedHash:null,provenance:{url:evidence.url,blockIds:[]}}]}};
@@ -191,8 +193,9 @@ export async function requestWebpageFacts(dependencies) {
       candidates.push(candidate);candidateIndices.push(index);
     }
     if(new Set(candidates.map(c=>c.normalizedHash)).size!==candidates.length)return {ok:false,error:{kind:'WebpageFactsInvalid'}};
-    if(!candidates.length&&(!dependencies.normalizeClaims||pass>0||partialIssues.length)){if(!partialIssues.length)issue('WebpageFactsEmpty',null,null);return {ok:true,value:{candidates:[],notes,status:'empty',partialIssues:Object.freeze(partialIssues)}};}
-    if(!dependencies.normalizeClaims||pass>0||partialIssues.length)break;
+    if(!candidates.length&&(!dependencies.normalizeClaims||pass>0)){if(!partialIssues.length)issue('WebpageFactsEmpty',null,null);return {ok:true,value:{candidates:[],notes,status:'empty',partialIssues:Object.freeze(partialIssues)}};}
+    if(!dependencies.normalizeClaims||pass>0)break;
+    payload={...payload,candidates:payload.candidates.filter((_,index)=>candidateIndices.includes(index))};
     const extractedSchema=webpageFactsSchema(capture.value.sources,goals).schema;
     const properties=/** @type {Record<string,unknown>} */(extractedSchema.properties);
     const normalizationSchema={name:'webpage_claim_boundaries_v5_compact_unchanged',schema:{type:'object',additionalProperties:false,required:['notes','reviews','additionalCandidates'],properties:{notes:properties.notes,additionalCandidates:properties.candidates,reviews:{type:'array',minItems:candidates.length,maxItems:candidates.length,items:{type:'object',additionalProperties:false,required:['sourceNormalizedHash','relationshipUnits','candidates'],properties:{sourceNormalizedHash:{type:'string',...(candidates.length?{enum:candidates.map(c=>c.normalizedHash)}:{})},relationshipUnits:{type:'array',minItems:1,items:{type:'object',additionalProperties:false,required:['condition','relationship','childNormalizedHash'],properties:{condition:{type:['string','null'],minLength:1},relationship:{type:'string',minLength:1},childNormalizedHash:{type:'string',minLength:1}}}},candidates:{anyOf:[{type:'null'},{.../** @type {Record<string,unknown>} */(properties.candidates),minItems:1}]}}}}}}};
@@ -200,7 +203,7 @@ export async function requestWebpageFacts(dependencies) {
     if(!normalized.ok)return normalized;
     const reviewed=structuredClone(normalized.value);
     if(record(reviewed)&&Array.isArray(reviewed.reviews))for(const review of reviewed.reviews)if(record(review)&&review.candidates===null){
-      const parent=payload.candidates.find(candidate=>record(candidate)&&candidate.normalizedHash===review.sourceNormalizedHash);
+      const parent=/** @type {unknown[]} */(payload.candidates).find(candidate=>record(candidate)&&candidate.normalizedHash===review.sourceNormalizedHash);
       if(!parent)return {ok:false,error:{kind:'WebpageClaimBoundariesInvalid'}};
       review.candidates=[structuredClone(parent)];
     }

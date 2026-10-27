@@ -8,6 +8,8 @@ import { createWebpageImageCache } from './webpage-image-cache.js';
 import { createJevDecisionModel, JEV_GRADER_CONFIGURATION } from './jev-answer-grader.js';
 import { capturedImageCaptionPrompt, capturedImageCaptionSchema, isCapturedImageCaption, capturedImageDecision, selectCapturedImages } from './url-capture-association.js';
 import { URL_CAPTURE_TYPE, parseUrlCapture } from '../src/features/knowledge-workflows/url-capture.js';
+import { auditMaterialImageCoverage } from './material-image-coverage.js';
+import { requestCoveredMaterialText } from './material-text-coverage.js';
 import { requestWebpageFacts, createWebpageAttemptPolicy, isWebpageEvidence, webpageFactsPrompt, knowledgeSelectionPolicy } from './webpage-facts.js';
 // @ts-check
 
@@ -399,6 +401,7 @@ export function normalizePlannerOutput(value, input) {
 /**
  * @typedef {{
  *   readonly structuredOutput?: boolean,
+ *   readonly requireCoverage?: boolean,
  *   readonly normalizeClaims?: boolean,
  *   readonly reviewUsefulness?: boolean,
  *   readonly deferQualityReview?: boolean,
@@ -453,6 +456,7 @@ function pageObservationDiagnostic(value) {
 /**
  * @typedef {{
  *   readonly structuredOutput?: boolean,
+ *   readonly requireCoverage?: boolean,
  *   readonly normalizeClaims?: boolean,
  *   readonly reviewUsefulness?: boolean,
  *   readonly deferQualityReview?: boolean,
@@ -475,13 +479,16 @@ export async function requestPageObservation(dependencies) {
 }
 
 /**
- * @param {Omit<PageObservationRequest, "input"> & { readonly input: { readonly sections: readonly (MaterialSection & { readonly url: string })[], readonly coverageGoals: readonly { readonly id: string }[], readonly fileName: string, readonly progress: unknown, readonly sourceContext?: { readonly title: string, readonly overview: string }, readonly mode?: "text" | "image", readonly visualId?: string, readonly scope?: {readonly ownerId:string,readonly runId:string}, readonly imageIdentity?: import("./upload-image-boundary.js").UploadedImageIdentity }, readonly observeImage?: boolean, readonly reviewMaterial?: boolean, readonly decodeImage?: import("./upload-image-boundary.js").ImageDecoder, readonly attachments?: readonly import("./knowledge-workflow-model.js").KnowledgeModelAttachment[] }} dependencies
+ * @typedef {Omit<PageObservationRequest, "input"> & { readonly input: { readonly sections: readonly (MaterialSection & { readonly url: string })[], readonly coverageGoals: readonly { readonly id: string }[], readonly previousKnowledge?:readonly {id:string,summary:string}[],readonly lessOften?:readonly {id:string,summary:string}[],readonly fileName: string, readonly progress: unknown, readonly sourceContext?: { readonly title: string, readonly overview: string }, readonly mode?: "text" | "image", readonly visualId?: string, readonly scope?: {readonly ownerId:string,readonly runId:string}, readonly imageIdentity?: import("./upload-image-boundary.js").UploadedImageIdentity }, readonly observeImage?: boolean, readonly reviewMaterial?: boolean, readonly decodeImage?: import("./upload-image-boundary.js").ImageDecoder, readonly attachments?: readonly import("./knowledge-workflow-model.js").KnowledgeModelAttachment[] }} MaterialBatchRequest
+ */
+/** @param {MaterialBatchRequest} dependencies
  * @returns {Promise<Result<readonly { readonly url: string, readonly notes: string, readonly candidates: readonly import("../src/features/knowledge-workflows/extraction.js").KnowledgeCandidate[] }[], { readonly kind: string, readonly technicalRetriesExhausted?:boolean, readonly technicalAttempts?:number }>>}
  */
 export async function requestMaterialBatch(dependencies) {
   const input = dependencies?.input;
   const mode = input?.mode ?? "text";
   if ((dependencies?.reviewMaterial !== undefined && typeof dependencies.reviewMaterial !== "boolean") || (dependencies?.observeImage !== undefined && typeof dependencies.observeImage !== "boolean") || !text(dependencies?.taskId) || typeof dependencies?.generate !== "function" || typeof dependencies?.logger !== "function" || !positiveInteger(dependencies?.maxOutputTokens) || !record(input) || !text(input.fileName) || (input.sourceContext !== undefined && (!record(input.sourceContext) || !text(input.sourceContext.title) || typeof input.sourceContext.overview !== "string" || input.sourceContext.title.length > 300 || input.sourceContext.overview.length > 2_000)) || (mode !== "text" && mode !== "image") || (mode === "image" && !text(input.visualId)) || !Array.isArray(input.sections) || input.sections.length < 1 || input.sections.length > (mode === "image" ? 1 : 5) || input.sections.some((section) => !record(section) || !text(section.id) || !text(section.title) || !text(section.locator) || typeof section.text !== "string" || !text(section.url) || !URL.canParse(section.url) || new URL(section.url).protocol !== "https:") || new Set(input.sections.map((section) => section.url)).size !== input.sections.length || !Array.isArray(input.coverageGoals) || input.coverageGoals.some((goal) => !record(goal) || !text(goal.id))) return { ok: false, error: { kind: "KnowledgeMaterialBatchCommandInvalid" } };
+  if(mode==="text"&&dependencies.requireCoverage===true)return requestCoveredMaterialText(dependencies);
   if(mode==="image") {
     const identity=input.imageIdentity;
     const checked=await validateUploadedImage({identity,expected:{ownerId:input.scope?.ownerId??"",runId:input.scope?.runId??"",locator:input.sections[0].locator,visualId:input.visualId??""},attachments:dependencies.attachments,decode:dependencies.decodeImage});
@@ -505,6 +512,12 @@ export async function requestMaterialBatch(dependencies) {
   const repairInstruction = mode === "image" ? "\n# Correction\nReturn exactly notes and candidates. Each candidate has only summary, visibleEvidence, normalizedHash, coverageGoalIds. visibleEvidence must name visible support for every factual clause. Do not return page URLs, locators, evidence anchors, or media IDs. Correct the JSON without explanation." : "\n# Correction\nThe previous batch violated its schema or page attribution. Return every supplied page once, in order, using only its exact URL/locator and supplied goal IDs. Correct the JSON without explanation.";
   /** @param {readonly {url:string,notes:string,candidates:readonly import("../src/features/knowledge-workflows/extraction.js").KnowledgeCandidate[]}[]} pages */
   async function finish(pages) {
+    if(mode==='image'&&dependencies.requireCoverage===true){
+      if(visualObservations===undefined)return {ok:/** @type {const} */(false),error:{kind:'MaterialImageCoverageIncomplete'}};
+      const audited=await auditMaterialImageCoverage(dependencies,visualObservations,pages[0]);
+      if(!audited.ok)return audited;
+      pages=[audited.value];
+    }
     if (dependencies.reviewMaterial === false || pages.every(page => page.candidates.length === 0)) return { ok: /** @type {const} */ (true), value: pages };
     const candidates = pages.flatMap(page => page.candidates.map(candidate => ({ candidate, url: page.url })));
     const reviewed = await dependencies.generate({ taskId: `${dependencies.taskId}:review`, phase: "normalization", systemPrompt: materialReviewPrompt, input: { mode, operation: "review-material-source", sections: input.sections.map(section => ({ id: section.id, locator: section.locator, text: section.text, textIntegrity: { replacementCharacterCount: [...section.text].filter(character => character === "\uFFFD").length } })), ...(visualObservations === undefined ? {} : { visualObservations }), candidates: candidates.map(({candidate}, candidateIndex) => ({ candidateIndex, summary: candidate.summary, evidenceAnchors: candidate.evidenceAnchors })), coverageGoals: input.coverageGoals }, maxOutputTokens: dependencies.maxOutputTokens, ...(dependencies.attachments === undefined ? {} : { attachments: dependencies.attachments }) });
@@ -1229,7 +1242,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         if(!preferences.ok)return preferences;
         // All committed knowledge is authoritative, including points saved before an interrupted page completed.
         const previousKnowledge=preferences.value.previousKnowledge;
-        const observed = await requestPageObservation({normalizeClaims:true,deferQualityReview,structuredOutput:dependencies.webpageStructuredOutput,attemptPolicy,taskId:`scraper-observe-${url}${retrySuffix}`,input:{url:acquired.value.responseUrl,evidence:acquired.value.evidence,coverageGoals:plan.coverageGoals,lessOften:preferences.value.lessOften,previousKnowledge},maxOutputTokens:32768,
+        const observed = await requestPageObservation({requireCoverage:true,normalizeClaims:true,deferQualityReview,structuredOutput:dependencies.webpageStructuredOutput,taskId:`scraper-observe-${url}${retrySuffix}`,input:{url:acquired.value.responseUrl,evidence:acquired.value.evidence,coverageGoals:plan.coverageGoals,lessOften:preferences.value.lessOften,previousKnowledge},maxOutputTokens:32768,
           generate:imageModel,
           logger:dependencies.logger});
         if (!observed.ok) return observed;
@@ -1281,14 +1294,14 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         const frontierObserved = await invokeTool(run, "knowledge-scraper", `scraper-frontier-observe-${url}`, "extraction.frontier.observe", { url, candidateCount: observed.value.candidates.length });
         if (!frontierObserved.ok) return /** @type {const} */ ({ ok: false, error: { kind: frontierObserved.error.kind } });
         const links = pageOnly ? [] : projection.links.filter((link) => { try { const parsed = new URL(link); const root = new URL(rootUrl); return parsed.origin === root.origin && (root.pathname === "/" || parsed.pathname === root.pathname || parsed.pathname.startsWith(`${root.pathname.replace(/\/$/u, "")}/`)); } catch (error) { return false; } }).slice(0, 100);
-        const page = /** @type {PageObservation} */ ({ url, responseUrl:acquired.value.responseUrl, contentDigest, title: projection.title, byteCount: payload.byteLength, redirects: acquired.value.redirects, links, observedAt: dependencies.now(), candidates, notes: observed.value.notes });
+        const page = /** @type {PageObservation} */ ({ url, responseUrl:acquired.value.responseUrl, contentDigest, title: projection.title, byteCount: payload.byteLength, redirects: acquired.value.redirects, links, observedAt: dependencies.now(), candidates, notes: observed.value.notes, blockCoverage:observed.value.blockCoverage });
         return /** @type {const} */ ({ ok: true, value: page });
       },
     };
     /** @type {import("../src/features/knowledge-workflows/extraction.js").PageAcquirer} */
     const acquirer={fetchPage:async command=>{
       // Captured evidence belongs to this source revision, not a failed-review retry.
-      const key=`webpage-observation:0:${command.url}`;
+      const key=`webpage-observation:coverage-v1:${command.url}`;
       const checkpoint=await stages.run(run,key,key,async()=>{
         const acquired=await liveAcquirer.fetchPage(command);if(!acquired.ok)return acquired;
         const responseUrl=acquired.value.responseUrl??acquired.value.url;
@@ -1499,7 +1512,9 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         }
         const materialProgress=await progress.save({ownerId:run.ownerId,runId:run.runId,currentUrl:sections[0].url,pageTitle:material.fileName,sectionTitle:sections[0].title,stage:"Extracting knowledge",updatedAt:dependencies.now()});if(!materialProgress.ok)return materialProgress;
         const imageIdentity=currentVisual===undefined?undefined:{ownerId:run.ownerId,runId:run.runId,locator:sections[0].locator,visualId:currentVisual.id,digest:await imageHash(currentVisual.bytes)};
-        const observed = await requestMaterialBatch({ technicalRetries:dependencies.technicalRetries, reviewMaterial:false, taskId: `scraper-material-batch-${sections[0]?.id}${scratchpad.retryGeneration ? `-retry-${scratchpad.retryGeneration}` : ""}${attempt > 1 ? `-attempt-${attempt}` : ""}`, input: { sections, fileName: material.fileName, sourceContext: context.value, mode: material.mode, scope:{ownerId:run.ownerId,runId:run.runId}, ...(currentVisual === undefined ? {} : { visualId: currentVisual.id, imageIdentity }), coverageGoals: plan.coverageGoals, progress: { processedUrls: scratchpad.processedUrls, acceptedHashes: scratchpad.acceptedHashes, coverage: scratchpad.coverage, pageNotes: scratchpad.pageNotes ?? [], unresolvedGaps: scratchpad.unresolvedGaps } }, decodeImage:dependencies.decodeImage, maxOutputTokens: 16384, ...(currentVisual === undefined ? {} : { attachments: [{ id: currentVisual.id, mediaType: /** @type {"image/png" | "image/jpeg" | "image/webp" | "image/gif"} */ (currentVisual.mediaType), bytes: currentVisual.bytes }] }), generate: (command) => generate(run, command.phase === "normalization" ? "question-evaluator" : "knowledge-scraper", command.taskId, command.systemPrompt, {.../** @type {Record<string,unknown>} */(command.input),...(attempt>1?{processingAttempt:attempt}:{}),...(scratchpad.retryGeneration?{retryGeneration:scratchpad.retryGeneration}:{})}, command.maxOutputTokens, command.attachments, { timeoutMs: command.timeoutMs, responseSchema: command.responseSchema, technicalAttempt:command.technicalAttempt, reasoningEffort: command.reasoningEffort, providerSort: command.providerSort,budgetPageUrl:sections[0].url }), logger: (entry) => dependencies.logger({ ...entry, runId: run.runId, stage: "knowledge-scraper" }) });
+        const preferenceContext=await content.reviewContext({ownerId:run.ownerId,runId:run.runId,sourceId:run.sourceId,knowledgeId:`material-context:${run.runId}`});
+        if(!preferenceContext.ok)return preferenceContext;
+        const observed = await requestMaterialBatch({ requireCoverage:true,technicalRetries:dependencies.technicalRetries, reviewMaterial:false, taskId: `scraper-material-batch-${sections[0]?.id}${scratchpad.retryGeneration ? `-retry-${scratchpad.retryGeneration}` : ""}${attempt > 1 ? `-attempt-${attempt}` : ""}`, input: { sections, previousKnowledge:preferenceContext.value.previousKnowledge,lessOften:preferenceContext.value.lessOften,fileName: material.fileName, sourceContext: context.value, mode: material.mode, scope:{ownerId:run.ownerId,runId:run.runId}, ...(currentVisual === undefined ? {} : { visualId: currentVisual.id, imageIdentity }), coverageGoals: plan.coverageGoals, progress: { processedUrls: scratchpad.processedUrls, acceptedHashes: scratchpad.acceptedHashes, coverage: scratchpad.coverage, pageNotes: scratchpad.pageNotes ?? [], unresolvedGaps: scratchpad.unresolvedGaps } }, decodeImage:dependencies.decodeImage, maxOutputTokens: 16384, ...(currentVisual === undefined ? {} : { attachments: [{ id: currentVisual.id, mediaType: /** @type {"image/png" | "image/jpeg" | "image/webp" | "image/gif"} */ (currentVisual.mediaType), bytes: currentVisual.bytes }] }), generate: (command) => generate(run, command.phase === "normalization" ? "question-evaluator" : "knowledge-scraper", command.taskId, command.systemPrompt, {.../** @type {Record<string,unknown>} */(command.input),...(attempt>1?{processingAttempt:attempt}:{}),...(scratchpad.retryGeneration?{retryGeneration:scratchpad.retryGeneration}:{})}, command.maxOutputTokens, command.attachments, { timeoutMs: command.timeoutMs, responseSchema: command.responseSchema, technicalAttempt:command.technicalAttempt, reasoningEffort: command.reasoningEffort, providerSort: command.providerSort,budgetPageUrl:sections[0].url }), logger: (entry) => dependencies.logger({ ...entry, runId: run.runId, stage: "knowledge-scraper" }) });
         if (!observed.ok) return observed;
         return { ok: true, value: observed.value.map((page, index) => ({ ...page, title: sections[index].title, byteCount: material.mode === "image" && currentVisual !== undefined ? currentVisual.bytes.byteLength : new TextEncoder().encode(sections[index].text).byteLength, redirects: 0, links: sectionUrls, observedAt: dependencies.now() })) };
       },

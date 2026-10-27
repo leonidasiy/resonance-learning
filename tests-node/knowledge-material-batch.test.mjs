@@ -71,7 +71,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     let allowQuizRecovery=false,failedQuizReviews=0,recoveredDrafts=0;
     let modelCalls = 0; let invalidPairedDraftInjected = false, pairedFeedbackSeen = false;
     const transport = async (_url, init) => {
-      assert(++modelCalls < 120, "Bound the synthetic model fixture.");
+      assert(++modelCalls < 180, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
       const body = JSON.parse(init.body);
       if(String(_url).endsWith('/alpha/decisions')){
         decisionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id='capture-run'").get().n,2,'Association waits for all text points');
@@ -90,14 +90,14 @@ test("production upload runtime resumes text batches and processes selected PDF 
       if(body.response_format?.json_schema?.name==='quiz_evaluation_v3'){
         if(task.knowledge.sourceId==='capture-source'&&task.knowledge.mediaCandidates.length){assert.equal(task.imagePurpose,'illustration');assert.match(body.messages[0].content,/Missing depiction alone is not an unpictured knowledge fault/);}
         assert.equal(body.max_tokens,2048);assert.equal(modelInput.contract.role,'question-evaluator');
-        assert.match(body.messages[0].content,/paired-question-evaluator-v8/);
+        assert.match(body.messages[0].content,/paired-question-evaluator-v12/);
         assert.match(body.messages[0].content,/A faithful narrower relationship need not restore an unrelated or nonessential removed qualifier/);
         assert.match(body.messages[0].content,/Conditions, negations, units and causal qualifications necessary to preserve that relationship remain required/);
         assert.match(body.messages[0].content,/entire retained knowledge.summary/);
         assert.match(body.messages[0].content,/Quiz regeneration changes only the quiz/);
         assert(body.response_format.json_schema.schema.required.includes('knowledgeGroundingProblems'));
       }
-      if(body.response_format?.json_schema?.name==='paired_quiz_v3'){
+      if(body.response_format?.json_schema?.name==='paired_quiz_v4'){
         assert.match(body.messages[0].content,/Unicode NFKC normalization, trimming, case folding, and collapsing whitespace/);
         assert.match(body.messages[0].content,/exact canonical answer alone is sufficient/);
         assert.match(body.messages[0].content,/Synonyms are optional/);
@@ -127,6 +127,16 @@ test("production upload runtime resumes text batches and processes selected PDF 
         assert.equal(body.max_tokens,2048);
         output = { revision: 1, frontier: [], coverageGoals: [], unresolvedGaps: [], stopDecision: { decision: "continue", rationale: "Observe supplied inventory.", evidenceUrls: [], unresolvedGapIds: [] } };
         assert.equal(task.scratchpad.pendingBatch, undefined);
+      } else if (task.operation === 'extract-webpage-facts') {
+        batchSizes.push(1);
+        assert.equal(typeof message,'string','Uploaded text never travels as pixels');
+        output={notes:'Synthetic text coverage.',candidates:task.sourceBlocks.flatMap(block=>Array.from({length:block.sectionId==='parallel-page'?3:1},(_,index)=>({summary:block.sectionId==='parallel-page'?`Parallel fixture relationship ${index}`:block.text,normalizedHash:block.sectionId==='parallel-page'?`parallel-${index}`:block.id,coverageGoalIds:[],mediaCandidates:[],evidenceAnchors:[{reference:block.citationReference,clause:block.text}]})))};
+      } else if (task.operation === 'normalize-webpage-claim-boundaries') {
+        output={notes:'Synthetic complete text audit.',reviews:task.candidates.map(c=>({sourceNormalizedHash:c.normalizedHash,relationshipUnits:[{condition:null,relationship:c.summary,childNormalizedHash:c.normalizedHash}],candidates:null})),additionalCandidates:[],blockCoverage:task.sourceBlocks.map(b=>({blockId:b.id,disposition:'candidates',candidateHashes:task.candidates.filter(c=>c.evidenceAnchors.some(a=>a.reference.id===b.citationReference.id)).map(c=>c.normalizedHash),reason:'Synthetic supported text relationship.'}))};
+      } else if (task.operation === 'audit-material-image-coverage') {
+        output={observationCoverage:task.visualObservations.observations.map(o=>({observationId:o.id,disposition:'candidates',candidateHashes:task.candidates.map(c=>c.normalizedHash),reason:'Synthetic observed pixel relationship.'})),additionalCandidates:[]};
+      } else if (task.pairedQuiz) {
+        output={targets:task.pairedQuiz.canonicalAnswers.map(answer=>({answer,important:true,reason:'Synthetic central answer.'})),feedback:'Accepted fixture targets.'};
       } else if (task.operation === "review-material-source") {
         materialReviews.push(task.mode);
         assert.equal(body.response_format.type, "json_object");
@@ -180,7 +190,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       }
       else if (task.knowledge) output = { knowledgeId: task.knowledge.id, knowledgeRevision: task.knowledge.sourceRevision, canonicalAnswers: ["fixture"], citedEvidenceUrls: task.knowledge.evidenceAnchors.map((anchor) => anchor.url), multipleChoice: { prompt: `Which fixture belongs to ${task.knowledge.normalizedHash}?`, options: [{ key: "choice-a", text: "Fixture" }, { key: "choice-b", text: "Other" }], correctOptionKeys: ["choice-a"], correctOptionAnswers: [{ key: "choice-a", canonicalAnswer: "fixture" }], explanation: "Fixture is supported by the source." }, fillBlank: { prompt: "The supported answer is ____.", blanks: [{ id: "blank-1", canonicalAnswer: "fixture", acceptedAnswers: ["fixture"] }], explanation: "Fixture is supported by the source." } };
       else assert.fail("Unexpected synthetic model task");
-      if(body.response_format?.json_schema?.name === "paired_quiz_v3") {
+      if(body.response_format?.json_schema?.name === "paired_quiz_v4") {
         if(task.knowledge.summary==='Parallel fixture relationship 0')recoveredDrafts++;
         activeDrafts++;maximumDrafts=Math.max(maximumDrafts,activeDrafts);
         try { await new Promise(resolve=>setTimeout(resolve,20*(++draftOrdinal%3+1))); }
@@ -221,7 +231,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     }
     assert.equal(sawInterruption, true);assert.equal(pairedFeedbackSeen,true);
     assert.equal(run.state, "completed");
-    assert.deepEqual(batchSizes, [1, 1, 1, 1, 1, 1, 1]);
+    assert.deepEqual(batchSizes, sections.filter(section=>section.text.trim()).map(()=>1));
     assert.equal(run.counts.pages, 7);
     assert.equal(run.counts.knowledgePoints, 6);
     assert.equal(run.counts.acceptedQuizzes, 6);
@@ -375,7 +385,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     unwrap(await recoveryRuntime.execute(parallelRun));parallelRun=unwrap(await repository.findById(ownerId,parallelRunId));
     assert.equal(parallelRun.state,'completed');assert.equal(parallelRun.failureKind,null);
     assert.equal(parallelRun.counts.acceptedQuizzes,3);assert.equal(recoveredDrafts,1,'Recovery reuses the saved draft');
-    assert.equal(failedQuizReviews,5);assert.equal(modelCalls-beforeRecovery,1,'Successful peers and drafts require no repeated model calls');
+    assert.equal(failedQuizReviews,5);assert.equal(modelCalls-beforeRecovery,2,'Recovery rechecks answer importance and the critic while reusing successful peers and the saved draft');
 
     const content=new D1KnowledgeContentRepository({database,logger});
     const feedbackPoint=db.prepare('SELECT knowledge_id FROM extraction_knowledge_points WHERE run_id=? ORDER BY knowledge_id LIMIT 1').get(runId).knowledge_id;
