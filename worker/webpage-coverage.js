@@ -76,9 +76,24 @@ export async function requestCoveredWebpageFacts(dependencies,batch) {
       }
       const generated=await dependencies.generate({...command,input:enriched,systemPrompt:command.systemPrompt+(normalizing?coveragePrompt:''),...(schema?{responseSchema:schema}:{})});
       if(!generated.ok||!normalizing)return generated;
-      const value=generated.value;
+      const value=structuredClone(generated.value);
       const reviews=Array.isArray(value.reviews)?value.reviews:[];
       const originals=Array.isArray(task.candidates)?task.candidates:[];
+      const declared=[...originals,...reviews.flatMap(r=>record(r)&&Array.isArray(r.candidates)?r.candidates:[]),...(Array.isArray(value.additionalCandidates)?value.additionalCandidates:[])];
+      const identities=new Set(declared.flatMap(c=>record(c)&&text(c.normalizedHash)?[c.normalizedHash]:[]));
+      /** @type {Map<string,string>} */const unchangedAliases=new Map();
+      // candidates:null retains the exact parent; resolve only unambiguous labels, never claim text or citations.
+      for(const review of reviews)if(record(review)&&review.candidates===null){
+        const parent=originals.find(c=>record(c)&&c.normalizedHash===review.sourceNormalizedHash);
+        const unit=Array.isArray(review.relationshipUnits)&&review.relationshipUnits.length===1?review.relationshipUnits[0]:null;
+        if(!record(parent)||!text(parent.normalizedHash)||!record(unit)||!text(unit.childNormalizedHash))return {ok:false,error:{kind:'WebpageClaimBoundariesInvalid'}};
+        if(unit.childNormalizedHash!==parent.normalizedHash){
+          if(identities.has(unit.childNormalizedHash)||unchangedAliases.has(unit.childNormalizedHash))return {ok:false,error:{kind:'WebpageClaimBoundariesInvalid'}};
+          unchangedAliases.set(unit.childNormalizedHash,parent.normalizedHash);
+          unit.childNormalizedHash=parent.normalizedHash;
+        }
+      }
+      if(Array.isArray(value.blockCoverage))for(const entry of value.blockCoverage)if(record(entry)&&Array.isArray(entry.candidateHashes))entry.candidateHashes=entry.candidateHashes.map(hash=>unchangedAliases.get(hash)??hash);
       const finalCandidates=[...reviews.flatMap(r=>record(r)?r.candidates===null?originals.filter(c=>record(c)&&c.normalizedHash===r.sourceNormalizedHash):Array.isArray(r.candidates)?r.candidates:[]:[]),...(Array.isArray(value.additionalCandidates)?value.additionalCandidates:[])];
       if(!isCompleteBlockCoverage(value.blockCoverage,blocks,citations,finalCandidates))return {ok:false,error:{kind:'WebpageCoverageIncomplete'}};
       audited=structuredClone(value.blockCoverage);

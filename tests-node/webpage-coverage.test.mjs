@@ -69,3 +69,26 @@ test('normalizer can restore an educational block omitted by an empty extractor'
   });
   assert(result.ok);assert.equal(result.value.candidates[0].summary,blocks.at(-1).text);
 });
+
+test('compact unchanged reviews resolve unique child aliases without rewriting claims or losing coverage',async()=>{
+  const model=responder();
+  const result=await run(evidence,async command=>{
+    const r=await model(command);
+    if(command.phase==='normalization'){
+      for(const review of r.value.reviews)review.relationshipUnits[0].childNormalizedHash+='-kept';
+      for(const entry of r.value.blockCoverage)entry.candidateHashes=entry.candidateHashes.map(h=>h+'-kept');
+    }
+    return r;
+  });
+  assert(result.ok);
+  assert.deepEqual(result.value.candidates.map(c=>[c.normalizedHash,c.summary,c.evidenceAnchors[0].quote]),blocks.map(b=>[b.id,b.text,b.text]));
+  assert.deepEqual(result.value.blockCoverage.map(c=>c.candidateHashes),blocks.map(b=>[b.id]));
+});
+test('compact unchanged reviews reject aliases that collide with another claim identity',async()=>{
+  const model=responder();const result=await run(evidence,async command=>{
+    const r=await model(command);
+    if(command.phase==='normalization')r.value.reviews[0].relationshipUnits[0].childNormalizedHash=r.value.reviews[1].sourceNormalizedHash;
+    return r;
+  });
+  assert.equal(result.ok,false);assert.equal(result.error.kind,'WebpageClaimBoundariesInvalid');
+});
