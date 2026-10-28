@@ -44,7 +44,7 @@ export function isQuizQualityFailureKind(kind){return ['QuizScoreBelowThreshold'
 export async function readFailedQuizItems(database, scope) {
   try {
     const rows = await database.prepare(
-      "SELECT stage_key,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key LIKE 'quiz-point-failed:%' AND status='completed' AND NOT EXISTS (SELECT 1 FROM knowledge_workflow_stages completed WHERE completed.owner_id=knowledge_workflow_stages.owner_id AND completed.run_id=knowledge_workflow_stages.run_id AND completed.stage_key='quiz-point-completed:'||json_extract(knowledge_workflow_stages.result_json,'$.value.knowledgeId') AND completed.status='completed')",
+      "SELECT stage_key,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key >= 'quiz-point-failed:' AND stage_key < 'quiz-point-failed;' AND stage_key LIKE 'quiz-point-failed:%' AND status='completed' AND NOT EXISTS (SELECT 1 FROM knowledge_workflow_stages completed WHERE completed.owner_id=knowledge_workflow_stages.owner_id AND completed.run_id=knowledge_workflow_stages.run_id AND completed.stage_key='quiz-point-completed:'||json_extract(knowledge_workflow_stages.result_json,'$.value.knowledgeId') AND completed.status='completed')",
     ).bind(scope.ownerId, scope.runId).all();
     if (!rows.success) {
       return { ok: false, error: { kind: "WorkflowStagePersistenceFailed" } };

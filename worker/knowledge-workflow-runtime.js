@@ -973,11 +973,12 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         const failed=()=>points.map(()=>({ok:/** @type {const} */(false),error:{kind:'WorkflowStagePersistenceFailed'}}));
         // Successful reviews survive failed-page retries of this captured revision.
         const signature=await imageHash(new TextEncoder().encode(JSON.stringify({observation,retryGeneration:0,config:run.configDigests,protocol:{review:knowledgeReviewerPrompt,repair:knowledgeRepairPrompt,repairContext:knowledgeCriticRepairContextPrompt,imagePurpose:webpageImagePurposePrompt,selection:knowledgeBatchSelectionPrompt,maximumCriticOutputTokens:knowledgeCriticMaximumOutputTokens}})));
+        // Explicit BINARY ranges let the primary key seek these colon-terminated prefixes.
         const prefix=`page-reviews:${signature}:`, readyPrefix=`page-ready:${signature}:`;
         /** @type {{id:string,result:import('./knowledge-workflow-parallel-review.js').ReviewResult}[]} */ let previous=[];
         let complete=false;
         try {
-          const rows=await dependencies.database.prepare("SELECT input_digest,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND substr(stage_key,1,?)=? AND status='completed' AND EXISTS(SELECT 1 FROM knowledge_workflow_runs r WHERE r.owner_id=? AND r.run_id=? AND r.state<>'abandoned') AND NOT EXISTS(SELECT 1 FROM knowledge_workflow_run_tombstones t WHERE t.owner_id=? AND t.run_id=?) ORDER BY CAST(substr(stage_key,?) AS INTEGER)").bind(run.ownerId,run.runId,prefix.length,prefix,run.ownerId,run.runId,run.ownerId,run.runId,prefix.length+1).all();
+          const rows=await dependencies.database.prepare("SELECT input_digest,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key>=? AND stage_key<? AND substr(stage_key,1,?)=? AND status='completed' AND EXISTS(SELECT 1 FROM knowledge_workflow_runs r WHERE r.owner_id=? AND r.run_id=? AND r.state<>'abandoned') AND NOT EXISTS(SELECT 1 FROM knowledge_workflow_run_tombstones t WHERE t.owner_id=? AND t.run_id=?) ORDER BY CAST(substr(stage_key,?) AS INTEGER)").bind(run.ownerId,run.runId,prefix,prefix.slice(0,-1)+";",prefix.length,prefix,run.ownerId,run.runId,run.ownerId,run.runId,prefix.length+1).all();
           if(!rows.success)return failed();
           for(const row of rows.results){
             if(!record(row)||row.input_digest!==signature||!text(row.result_json))return failed();
@@ -992,7 +993,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         // Old partial checkpoints contain individually reviewed drafts, not novelty-selected points.
         const ready=new Map(complete?previous.map(entry=>[entry.id,entry.result]):[]);
         try {
-          const rows=await dependencies.database.prepare("SELECT result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND substr(stage_key,1,?)=? AND status='completed' AND EXISTS(SELECT 1 FROM knowledge_workflow_runs r WHERE r.owner_id=? AND r.run_id=? AND r.state<>'abandoned') AND NOT EXISTS(SELECT 1 FROM knowledge_workflow_run_tombstones t WHERE t.owner_id=? AND t.run_id=?)").bind(run.ownerId,run.runId,readyPrefix.length,readyPrefix,run.ownerId,run.runId,run.ownerId,run.runId).all();
+          const rows=await dependencies.database.prepare("SELECT result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key>=? AND stage_key<? AND substr(stage_key,1,?)=? AND status='completed' AND EXISTS(SELECT 1 FROM knowledge_workflow_runs r WHERE r.owner_id=? AND r.run_id=? AND r.state<>'abandoned') AND NOT EXISTS(SELECT 1 FROM knowledge_workflow_run_tombstones t WHERE t.owner_id=? AND t.run_id=?)").bind(run.ownerId,run.runId,readyPrefix,readyPrefix.slice(0,-1)+";",readyPrefix.length,readyPrefix,run.ownerId,run.runId,run.ownerId,run.runId).all();
           if(!rows.success)return failed();
           for(const row of rows.results){
             const cached=record(row)&&text(row.result_json)?JSON.parse(row.result_json):null;
@@ -1824,7 +1825,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       async function quizChunk(command) {
         /** @type {import('../src/features/knowledge-workflows/quiz.js').QuizDisposition[]} */ const dispositions = [];
         const completedIds = new Set(),pointIds=new Set(command.points.map(point=>point.id));
-        const saved = await dependencies.database.prepare("SELECT s.stage_key,s.result_json,q.status AS publication_status,q.attempt_number AS publication_attempt FROM knowledge_workflow_stages s LEFT JOIN knowledge_workflow_quizzes q ON q.owner_id=s.owner_id AND q.run_id=s.run_id AND q.knowledge_id=substr(s.stage_key,length('quiz-point-completed:')+1) WHERE s.owner_id=? AND s.run_id=? AND s.stage_key LIKE 'quiz-point-completed:%' AND s.status='completed'").bind(current.ownerId,current.runId).all();
+        const saved = await dependencies.database.prepare("SELECT s.stage_key,s.result_json,q.status AS publication_status,q.attempt_number AS publication_attempt FROM knowledge_workflow_stages s LEFT JOIN knowledge_workflow_quizzes q ON q.owner_id=s.owner_id AND q.run_id=s.run_id AND q.knowledge_id=substr(s.stage_key,length('quiz-point-completed:')+1) WHERE s.owner_id=? AND s.run_id=? AND s.stage_key >= 'quiz-point-completed:' AND s.stage_key < 'quiz-point-completed;' AND s.stage_key LIKE 'quiz-point-completed:%' AND s.status='completed'").bind(current.ownerId,current.runId).all();
         if (!saved.success) return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
         for (const row of saved.results) {
           let result;
