@@ -1005,7 +1005,10 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
             for(const entry of cached.value.results){if(!record(entry)||!text(entry.id)||!record(entry.result)||entry.result.ok!==true||!('value' in entry.result))return failed();ready.set(entry.id,entry.result);}
           }
         }catch(error){if(!(error instanceof Error))throw error;return failed();}
-        const window=points.filter(point=>!ready.has(point.id)).slice(0,reviewChunkSize);
+        const pending=points.filter(point=>!ready.has(point.id));
+        // Select completed backlog together without admitting more work or waiting for future reviews.
+        const reviewedPending=pending.filter(point=>byId.has(point.id));
+        const window=reviewedPending.length?reviewedPending:pending.slice(0,reviewChunkSize);
         const initialIds=new Set(byId.keys());
         let newReviews=0,savedReviews=false;
         /** @type {{kind:string}|undefined} */let selectionFailure;
