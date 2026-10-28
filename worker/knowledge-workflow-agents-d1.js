@@ -109,6 +109,39 @@ export class D1AgentMemoryRepository {
     }
   }
 
+  /** Same ordered identities and validation as full history; no ledger rows are dropped.
+   * Remove only metadata written by modern working-memory records and never read
+   * by prompt preparation. json_remove retains raw notes/Unicode, unknown fields,
+   * legacy outputs and compaction coverage, without scanning JSON virtual tables.
+   * @param {string} namespaceId @param {string} ownerId @returns {Promise<readonly AgentMemoryRecord[]>} */
+  async listContextRecords(namespaceId, ownerId) {
+    if (!text(namespaceId) || !text(ownerId)) throw new TypeError("Agent namespace ID is invalid.");
+    try {
+      const result = await this.#database.prepare(`SELECT namespace_id, record_id, kind, occurred_at,
+        CASE WHEN kind = 'working-memory' AND json_type(payload_json, '$.payload') = 'object'
+          AND json_type(payload_json, '$.payload.output') IS NULL
+          AND json_extract(payload_json, '$.payload.type') IS NOT 'compacted-context'
+          AND json_type(payload_json, '$.payload.role') = 'text'
+          AND json_type(payload_json, '$.payload.configDigest') = 'text'
+          AND json_type(payload_json, '$.payload.inputDigest') = 'text'
+          AND json_type(payload_json, '$.payload.notes') IS NOT NULL
+        THEN json_remove(payload_json, '$.payload.role', '$.payload.configDigest', '$.payload.inputDigest', '$.payload.usage')
+        ELSE payload_json END AS payload_json
+        FROM agent_memory_records WHERE owner_id = ? AND namespace_id = ? ORDER BY occurred_at, record_id`).bind(ownerId, namespaceId).all();
+      if (result.success !== true) throw new Error("Agent memory records could not be read.");
+      const records = [];
+      for (const row of result.results) {
+        const parsed = recordFromRow(row);
+        if (parsed === null) throw new TypeError("Stored agent memory record is invalid.");
+        records.push(parsed);
+      }
+      return Object.freeze(records);
+    } catch (error) {
+      this.#logger({ event: "agent-memory-d1-failure", failureKind: "AgentMemoryPersistenceFailed" });
+      throw error;
+    }
+  }
+
   /** @param {SharedHandoff} handoff @returns {Promise<null>} */
   async appendHandoff(handoff) {
     try {

@@ -219,7 +219,7 @@ export function createKnowledgeWorkflowAgentRuntime(dependencies) {
       };
       const namespace = await namespaceFor(command.ownerId, command.runId, command.role);
       if (!namespace.ok) return namespace;
-      const existing = await dependencies.memory.listRecords(namespace.value);
+      const existing = await (dependencies.memory.listContextRecords ?? dependencies.memory.listRecords).call(dependencies.memory, namespace.value);
       if (!existing.ok) return { ok: false, error: { kind: existing.error.kind } };
       for (const entry of existing.value) {
         if (entry.namespaceId !== namespace.value.id) return { ok: false, error: { kind: "AgentMemoryIsolationViolation" } };

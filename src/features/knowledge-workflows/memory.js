@@ -79,6 +79,7 @@
  *   readonly createNamespace: (namespace: AgentMemoryNamespace) => Promise<null>,
  *   readonly appendRecord: (record: AgentMemoryRecord, ownerId: string) => Promise<null>,
  *   readonly listRecords: (namespaceId: string, ownerId: string) => Promise<readonly AgentMemoryRecord[]>,
+ *   readonly listContextRecords?: (namespaceId: string, ownerId: string) => Promise<readonly AgentMemoryRecord[]>,
  *   readonly appendHandoff: (handoff: SharedHandoff) => Promise<null>
  * }} AgentMemoryRepository
  */
@@ -257,6 +258,20 @@ export function createAgentMemoryStore(dependencies) {
       } catch {
         return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } };
       }
+    },
+
+    /** Read every record header/event with only prompt-relevant payload fields.
+     * Full-history repositories remain compatible through the fallback.
+     * @param {AgentMemoryNamespace} namespace @returns {Promise<Result<readonly AgentMemoryRecord[], AgentMemoryFailure>>} */
+    async listContextRecords(namespace) {
+      if (!isNamespace(namespace)) return { ok: false, error: { kind: "AgentMemoryIsolationViolation" } };
+      let stored;
+      try { stored = await repository.findNamespace(namespace.id, namespace.ownerId); }
+      catch { return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } }; }
+      if (stored === null || !sameNamespace(namespace, stored)) return { ok: false, error: { kind: "AgentMemoryIsolationViolation" } };
+      try {
+        return { ok: true, value: await (repository.listContextRecords ?? repository.listRecords).call(repository, namespace.id, namespace.ownerId) };
+      } catch { return { ok: false, error: { kind: "AgentMemoryPersistenceFailed" } }; }
     },
 
     /** @param {SharedHandoffCommand} command @returns {Promise<Result<SharedHandoff, AgentMemoryFailure>>} */
