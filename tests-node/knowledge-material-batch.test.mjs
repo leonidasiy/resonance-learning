@@ -1,3 +1,4 @@
+import {knowledgeUsefulnessInstruction} from '../src/features/knowledge-workflows/knowledge-usefulness.js';
 import {syntheticAssessment,syntheticReviewAudit} from './fixtures/knowledge-review-audit.mjs';
 import { WEBPAGE_IMAGE_POLICY } from '../worker/webpage-image-budget.js';
 import assert from "node:assert/strict";
@@ -104,6 +105,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
         assert.match(body.response_format.json_schema.schema.properties.fillBlank.properties.blanks.items.properties.acceptedAnswers.description,/exact canonical answer alone is sufficient/);
         assert.match(body.response_format.json_schema.schema.properties.fillBlank.properties.blanks.items.properties.acceptedAnswers.description,/unique after Unicode NFKC/);
       }
+      if (['extract-webpage-facts','normalize-webpage-claim-boundaries','audit-material-image-coverage','review-material-source'].includes(task.operation) || ['knowledge_batch_selection_v1','knowledge_quality_review_v11'].includes(body.response_format?.json_schema?.name) || (task.sections && task.operation !== 'observe-material-image' && task.operation !== 'plan-authorized-material' && task.operation !== 'replan-authorized-material')) assert(body.messages[0].content.includes(knowledgeUsefulnessInstruction), 'All production selection calls receive the shared usefulness policy');
       let output;
       if(body.response_format?.json_schema?.name==='captured_image_caption_v1'){
         captionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id='capture-run'").get().n,2);assert(!task.knowledge,'Caption has no knowledge to force-fit');assert.equal(message[2].type,'image_url');output={description:`Fixture original ${task.imageId}`,visibleText:'Q K V'};if(captionCalls===1)output.extra='invalid';
