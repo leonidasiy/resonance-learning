@@ -112,6 +112,9 @@ function parseDocument(value, descriptor) {
     }
     const resultUrl = new URL(item.url);
     if (resultUrl.protocol !== "https:" || resultUrl.username !== "" || resultUrl.password !== "" || resultUrl.hash !== "") continue;
+    // YouTube sources belong to the separately selected YouTube provider.
+    const host = resultUrl.hostname.replace(/\.$/, "");
+    if (["youtube.com", "youtu.be", "youtube-nocookie.com"].some(domain => host === domain || host.endsWith(`.${domain}`))) continue;
     const canonicalUrl = item.url;
     candidates.push(Object.freeze({
       providerId: descriptor.id,

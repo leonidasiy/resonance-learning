@@ -81,6 +81,41 @@ Deno.test("Brave provider preserves exact distinct same-host material URLs", asy
   );
 });
 
+Deno.test("Web source results exclude YouTube URLs on initial and continued searches", async () => {
+  const excluded = [
+    "https://youtube.com/watch?v=instruments",
+    "https://www.youtube.com/watch?v=instruments",
+    "https://m.youtube.com/watch?v=instruments",
+    "https://www.youtube.com/shorts/instruments",
+    "https://youtu.be/instruments",
+    "https://www.youtube-nocookie.com/embed/instruments",
+    "https://WWW.YOUTUBE.COM./watch?v=instruments",
+  ];
+  const retained = [
+    "https://music.example/instruments",
+    "https://music.example/about-youtube",
+    "https://youtube.com.example/instruments",
+    "https://notyoutube.com/instruments",
+  ];
+  const provider = createBraveSearchProvider(
+    { providerId: "web", label: "Web", resultKind: "web", priority: 1, enabled: true, maximumResults: 20, apiVersion: "2023-10-11" },
+    {
+      credential: () => ({ ok: true, value: "fixture" }),
+      fetch: async () => Response.json({
+        query: { more_results_available: true },
+        web: { results: [...excluded, ...retained].map(url => ({ title: "Musical instruments — YouTube", url })) },
+      }),
+    },
+  );
+  for (const cursor of [undefined, "1:20"]) {
+    const result = await provider.search({ ...command, limit: 20, ...(cursor === undefined ? {} : { cursor }) });
+    equal(result.ok, true);
+    if (!result.ok) throw new Error(result.error.kind);
+    equal(JSON.stringify(result.value.map(item => item.canonicalUrl)), JSON.stringify(retained));
+    equal(result.nextCursor, cursor === undefined ? "1:20" : "2:20");
+  }
+});
+
 Deno.test("Brave provider reports credential, quota, and document failures", async () => {
   const missing = createBraveSearchProvider(
     {
