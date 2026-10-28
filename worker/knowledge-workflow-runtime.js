@@ -1779,22 +1779,34 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     async execute(run) {
       if (!isKnowledgeWorkflowRun(run)) return { ok: false, error: { kind: "WorkflowCommandInvalid" } };
       if (run.state === "source-added" || run.state === "awaiting-rights-review" || run.state === "awaiting-upload" || run.state === "paused" || run.state === "awaiting-time-limit-decision" || run.state === "retryable-failure" || run.state === "completed" || run.state === "abandoned") return { ok: true, value: { state: run.state, run } };
-      // CPU retries reduce admission durably; later continuations retain the observed resource constraint.
-      const cpuKey='workflow-cpu-backpressure:v1';
+      // Append CPU reductions; legacy single-point checkpoints never regain wider admission.
+      const cpuKey='workflow-cpu-backpressure:v1',cpuKeys=[cpuKey,'workflow-cpu-backpressure:v2:1','workflow-cpu-backpressure:v2:2'];
       try {
-        let profile=await dependencies.database.prepare('SELECT status,input_digest,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key=?').bind(run.ownerId,run.runId,cpuKey).first();
-        if(dependencies.cpuLimited===true||record(profile)&&profile.status==='claimed') {
-          const marked=await stages.run(run,cpuKey,cpuKey,async()=>({ok:true,value:null}),{resumeSafe:true});
+        let width=Math.min(KNOWLEDGE_REVIEW_WIDTH,QUIZ_PIPELINE_WIDTH);
+        const profiles=await dependencies.database.prepare('SELECT stage_key,status,input_digest,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key IN (?,?,?)').bind(run.ownerId,run.runId,...cpuKeys).all();
+        if(!profiles.success)return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
+        for(const profile of profiles.results) {
+          if(!record(profile)||!text(profile.stage_key)||!cpuKeys.includes(profile.stage_key)||profile.input_digest!==profile.stage_key)return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
+          const cpuFailures=cpuKeys.indexOf(profile.stage_key),expected=cpuFailures===0?null:{width:3-cpuFailures,cpuFailures};
+          let result=text(profile.result_json)?JSON.parse(profile.result_json):null;
+          if(profile.status==='claimed') {
+            const marked=await stages.run(run,profile.stage_key,profile.stage_key,async()=>({ok:true,value:expected}),{resumeSafe:true});
+            if(!marked.ok)return marked;
+            result=marked;
+          }else if(profile.status!=='completed')return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
+          if(!record(result)||Object.keys(result).sort().join(',')!=='ok,value'||result.ok!==true||(expected===null?result.value!==null:!record(result.value)||Object.keys(result.value).sort().join(',')!=='cpuFailures,width'||result.value.width!==expected.width||result.value.cpuFailures!==expected.cpuFailures))return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
+          width=Math.min(width,expected?.width??1);
+        }
+        if(dependencies.cpuLimited===true&&width>1) {
+          const cpuFailures=4-width,key=cpuKeys[cpuFailures],value={width:width-1,cpuFailures};
+          const marked=await stages.run(run,key,key,async()=>({ok:true,value}),{resumeSafe:true});
           if(!marked.ok)return marked;
-          profile={status:'completed',input_digest:cpuKey,result_json:JSON.stringify(marked)};
-          if(dependencies.cpuLimited===true)dependencies.logger({event:'workflow-cpu-backpressure-enabled',ownerId:run.ownerId,runId:run.runId,count:1});
+          if(JSON.stringify(marked.value)!==JSON.stringify(value))return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
+          width=value.width;
         }
-        if(profile!==null) {
-          const result=record(profile)&&text(profile.result_json)?JSON.parse(profile.result_json):null;
-          if(!record(profile)||profile.status!=='completed'||profile.input_digest!==cpuKey||!record(result)||result.ok!==true||result.value!==null)return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
-        }
-        reviewChunkSize=profile===null?KNOWLEDGE_REVIEW_WIDTH:1;
-        quizChunkSize=profile===null?QUIZ_PIPELINE_WIDTH:1;
+        reviewChunkSize=width;
+        quizChunkSize=width;
+        if(dependencies.cpuLimited===true)dependencies.logger({event:'workflow-cpu-backpressure-enabled',ownerId:run.ownerId,runId:run.runId,count:width});
       }catch {return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};}
       let current = run;
       const navigationHandoff=createRobotsNavigationHandoff({sourceUrl:run.canonicalSourceIdentity,readPage:c=>dependencies.browser.readPage(c),click:async c=>{const clicked=await invokeTool(run,'knowledge-scraper',`navigation-click-${c.targetId}`,'browser.navigation.click',c);return clicked.ok?{ok:true,value:/** @type {import('./hybrid-navigation.js').NavigationPage} */(clicked.value)}:clicked;}});
