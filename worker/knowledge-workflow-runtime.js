@@ -1597,7 +1597,14 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       if(!visual.ok)return {ok:false,error:{kind:'error' in visual?visual.error?.kind??'WorkflowMaterialImageUnavailable':'WorkflowMaterialImageUnavailable'}};
       const reviewed=await reviewCapturedCandidate({run,point,sourceEvidence:{sections:[{id:section.id,url:point.attribution.sourceUrl,locator:section.locator,text:section.text}]},sourceMode:material.mode==='image'?'image':'text',...(visual.value===undefined?{}:{supportingImage:{...visual.value,mediaType:/** @type {'image/png'|'image/jpeg'|'image/webp'|'image/gif'} */(visual.value.mediaType)}})});
       return reviewed.ok?{ok:true,value:reviewed.value?.point??null,...(reviewed.value?.binding===undefined?{}:{binding:reviewed.value.binding})}:reviewed;
-    }), scratchpad: { load: (scope) => loadExtractionScratchpad(scope, run), save: (scratchpad) => content.saveScratchpad(scratchpad, dependencies.now()) }, knowledge: { append: async (point) => {
+    }), scratchpad: { load: async (scope) => {
+      const loaded=await loadExtractionScratchpad(scope,run);
+      if(!loaded.ok||!loaded.value.pendingBatch||loaded.value.pendingBatch.key===batchAcquirer.key)return loaded;
+      // A deployment can change extraction prompts; reobserve unfinished pages under the current protocol.
+      const {pendingBatch,...checkpoint}=loaded.value;
+      dependencies.logger({event:'knowledge-workflow-material-batch-invalidated',ownerId:run.ownerId,runId:run.runId,stage:'knowledge-scraper'});
+      return {ok:true,value:checkpoint};
+    }, save: (scratchpad) => content.saveScratchpad(scratchpad, dependencies.now()) }, knowledge: { append: async (point) => {
       if(material.mode!=="image")return appendKnowledge(run,point);
       const section=sectionsByUrl.get(point.attribution.sourceUrl);
       if(section===undefined)return {ok:false,error:{kind:"WorkflowMaterialSectionNotFound"}};

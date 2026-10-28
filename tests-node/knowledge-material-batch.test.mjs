@@ -226,6 +226,11 @@ test("production upload runtime resumes text batches and processes selected PDF 
         assert.equal(sawInterruption, false, JSON.stringify(executed.error));
         assert(JSON.stringify(executed.error).includes("ScratchpadPersistenceFailed"), JSON.stringify(executed.error));
         sawInterruption = true;
+        const checkpoint=JSON.parse(db.prepare("SELECT scratchpad_json FROM extraction_scratchpads WHERE run_id=?").get(runId).scratchpad_json);
+        assert(checkpoint.pendingBatch,'An interrupted page has a durable observation');
+        checkpoint.pendingBatch.key='previous-deployment-protocol';
+        checkpoint.planCheckpoint.batchKey='previous-deployment-protocol';
+        db.prepare("UPDATE extraction_scratchpads SET scratchpad_json=? WHERE run_id=?").run(JSON.stringify(checkpoint),runId);
       }
       run = unwrap(await repository.findById(ownerId, runId));
       const afterQuiz=db.prepare("SELECT COUNT(*) count FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'quiz-point-completed:%' AND status='completed'").get(runId).count;
@@ -234,8 +239,9 @@ test("production upload runtime resumes text batches and processes selected PDF 
       assert.equal(run.extractionDeadlineAt,extractionClock);
     }
     assert.equal(sawInterruption, true);assert.equal(pairedFeedbackSeen,true);
+    assert.equal(metricLogs.filter(entry=>entry.event==='knowledge-workflow-material-batch-invalidated').length,1,'Reobserve the stale batch once without duplicating committed knowledge');
     assert.equal(run.state, "completed");
-    assert.deepEqual(batchSizes, sections.filter(section=>section.text.trim()).map(()=>1));
+    assert.deepEqual(batchSizes, [1,...sections.filter(section=>section.text.trim()).map(()=>1)],'Only the unfinished stale page is extracted again');
     assert.equal(run.counts.pages, 7);
     assert.equal(run.counts.knowledgePoints, 6);
     assert.equal(run.counts.acceptedQuizzes, 6);
