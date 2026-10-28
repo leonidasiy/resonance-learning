@@ -4,7 +4,7 @@ import {workflowPersistenceDiagnostic} from "./knowledge-workflow-logging.js";
 import {AgentExecutionBoundaryFailure} from '../src/features/knowledge-workflows/harness.js';
 
 /** @typedef {import('./knowledge-workflow-content-d1.js').D1DatabasePort} Database */
-/** @template T @typedef {{ok:true,value:T}|{ok:false,error:{kind:string,causeKind?:string,status?:number}}} Result */
+/** @template T @typedef {{ok:true,value:T}|{ok:false,error:{kind:string,causeKind?:string,status?:number,diagnosticToken?:string}}} Result */
 /** @typedef {{ownerId:string,runId:string}} Scope */
 /** @typedef {{scope:Scope,key:string,inputDigest:string,createdAt:string}} StageIdentity */
 /** @typedef {StageIdentity & {status:'claimed'|'completed',result:Record<string,unknown>|null,completedAt:string|null}} FailedModelStage */
@@ -114,7 +114,7 @@ export class D1WorkflowStageRepository {
       if (error instanceof AgentExecutionBoundaryFailure) throw error;
       if (!(error instanceof Error)) throw error;
       this.#logger({event:'workflow-stage-persistence-failure',stage:key.split(':')[0],failureKind:'WorkflowStagePersistenceFailed',field:error instanceof TypeError?'type-error':error instanceof SyntaxError?'syntax-error':'database-error',diagnosticToken:workflowPersistenceDiagnostic(error)});
-      return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
+      return {ok:false,error:{kind:'WorkflowStagePersistenceFailed',diagnosticToken:workflowPersistenceDiagnostic(error)}};
     }
   }
 }

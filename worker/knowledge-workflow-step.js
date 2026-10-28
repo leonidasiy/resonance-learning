@@ -1,4 +1,5 @@
 // @ts-check
+import {workflowPersistenceDiagnostic} from './knowledge-workflow-logging.js';
 
 /** @template T, E @typedef {{ readonly ok: true, readonly value: T } | { readonly ok: false, readonly error: E }} Result */
 
@@ -32,6 +33,23 @@ export function isTransientBrowserFailure(error) {
   return /^(KnowledgeBrowser(NavigationFailed|TimedOut|LoadTimedOut|CaptureTimedOut|CaptureInterrupted|PageClosed)|KnowledgePageFetchFailed|FirecrawlBrowser(ApiFailed|TimedOut|OperationFailed))(?::|$)/u.test(value.detailKind??value.kind??"");
 }
 
+/** Preserve safe platform categories without exposing exception text.
+ * @param {unknown} error */
+export function workflowExecutionFailure(error) {
+  const diagnostic=workflowPersistenceDiagnostic(error);
+  return {kind:diagnostic==='cpu-limit'?'WorkflowCpuTimeLimitExceeded':diagnostic==='subrequest-limit'?'WorkflowSubrequestLimitExceeded':'WorkflowExecutionStopped',...(['database-error','cpu-limit','subrequest-limit'].includes(diagnostic)?{}:{detailDiagnosticToken:diagnostic})};
+}
+
+/** @param {unknown} error */
+function retryDiagnostic(error) {
+  if(!error||typeof error!=='object')return '';
+  const value=/** @type {{kind?:string,detailKind?:string,detailDiagnosticToken?:string,diagnosticToken?:string}} */(error);
+  const kind=value.detailKind??value.kind??'';
+  // Model retries have their own durable attempt and billing protections.
+  if(!/PersistenceFailed$|^Workflow(CpuTimeLimitExceeded|SubrequestLimitExceeded|ExecutionStopped)$/u.test(kind))return '';
+  return value.detailDiagnosticToken??value.diagnosticToken??(kind==='WorkflowCpuTimeLimitExceeded'?'cpu-limit':kind==='WorkflowSubrequestLimitExceeded'?'subrequest-limit':'');
+}
+
 /** Only observed source access/format restrictions require learner-supplied material.
  * @param {{kind?:string,detailKind?:string}} error */
 export function requiresWorkflowUpload(error) {
@@ -46,10 +64,16 @@ export async function executeRetryingWorkflowStep(dependencies) {
     let result;
     try { result=await executeAuthoritativeWorkflowStep({...dependencies,execute:run=>dependencies.execute(run,attempt+1,cpuLimited),name:`${dependencies.name}: attempt ${attempt+1}`}); }
     catch(error) {
-      if(!(error instanceof Error)||error.message!=="Worker exceeded CPU time limit."||attempt===3)throw error;
-      cpuLimited=true;
+      const diagnostic=workflowPersistenceDiagnostic(error);
+      if(!['cpu-limit','subrequest-limit','sqlite-busy','d1-overloaded','d1-reset','d1-network'].includes(diagnostic)||attempt===3)throw error;
+      if(['cpu-limit','subrequest-limit'].includes(diagnostic))cpuLimited=true;
     }
-    if(result&&(result.ok||!isTransientBrowserFailure(result.error)||attempt===3))return result;
+    if(result){
+      if(result.ok)return result;
+      const diagnostic=retryDiagnostic(result.error);
+      if(attempt===3||(!isTransientBrowserFailure(result.error)&&!['cpu-limit','subrequest-limit','sqlite-busy','d1-overloaded','d1-reset','d1-network'].includes(diagnostic)))return result;
+      if(['cpu-limit','subrequest-limit'].includes(diagnostic))cpuLimited=true;
+    }
     await dependencies.step.sleepUntil(`${dependencies.name}: backoff ${attempt+1}`,new Date(dependencies.now()+[5000,15000,30000][attempt]));
   }
 }

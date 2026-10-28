@@ -12,7 +12,7 @@ import { createMediaPipeline, createMediaPublicEgress, createUserAttestedLocalMa
 import { resolvePublicAddresses } from "./knowledge-workflow-network.js";
 import { createCloudflareImageDerivative, createCloudflareImageDecoder, isCloudflareImageBinding } from "./knowledge-workflow-media-transform.js";
 import { createKnowledgeWorkflowLogger } from "./knowledge-workflow-logging.js";
-import { executeRetryingWorkflowStep, requiresWorkflowUpload } from "./knowledge-workflow-step.js";
+import { executeRetryingWorkflowStep, requiresWorkflowUpload, workflowExecutionFailure } from "./knowledge-workflow-step.js";
 import { createAcquisitionClient, createAcquisitionWorkflowBrowser } from "./acquisition-client.js";
 import { ACQUISITION_POLICY } from "./acquisition-policy.js";
 import { createFirecrawlWorkflowBrowser } from "./firecrawl-browser.js";
@@ -225,13 +225,14 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
       });
       } catch (error) {
         if (!(error instanceof Error)) throw error;
-        executed = {ok:false,error:{kind:error.message === "Worker exceeded CPU time limit." ? "WorkflowCpuTimeLimitExceeded" : "WorkflowExecutionStopped"}};
+        executed = {ok:false,error:workflowExecutionFailure(error)};
       }
       if (executed.ok) return executed;
       const latest = await step.do(`${stepName}: reload after failure`, () => service.status({ ownerId, runId }));
       if (!latest.ok) throw new Error(latest.error.kind);
       const failureKind = executed.error.detailKind?.trim() || executed.error.kind;
-      const diagnosticToken = typeof executed.error.detailDiagnosticToken === "string" && /^[a-z0-9-]+$/u.test(executed.error.detailDiagnosticToken) ? executed.error.detailDiagnosticToken : undefined;
+      const category=executed.error.detailDiagnosticToken??executed.error.diagnosticToken;
+      const diagnosticToken = typeof category === "string" && /^[a-z0-9-]+$/u.test(category) ? category : undefined;
       logger({ event: "knowledge-workflow-execution-failure", ownerId, runId, stage: "executor", failureKind, ...(diagnosticToken === undefined ? {} : { diagnosticToken }) });
       const persistedFailureKind = diagnosticToken === undefined ? failureKind : `${failureKind}:${diagnosticToken}`;
       const offerUpload = latest.value.materialId == null && latest.value.counts.knowledgePoints === 0 && requiresWorkflowUpload(executed.error);

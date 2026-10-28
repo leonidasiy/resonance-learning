@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {observeWorkflowDatabase} from '../worker/knowledge-workflow-database.js';
 import {workflowPersistenceDiagnostic} from '../worker/knowledge-workflow-logging.js';
+import {executeRetryingWorkflowStep} from '../worker/knowledge-workflow-step.js';
+import {D1KnowledgeWorkflowProgressRepository} from '../worker/knowledge-workflow-progress-d1.js';
 
 function fixture(work) {
   const logs=[],sleeps=[];let attempts=0;
@@ -63,4 +65,19 @@ test('an explicitly unsuccessful transient read retries without treating the res
   let calls=0;const f=fixture(()=>calls++===0?{success:false,error:'Network connection lost'}:{success:true,results:[]});
   assert.equal((await f.database.prepare('SELECT id FROM runs').all()).success,true);
   assert.equal(f.attempts(),2);assert.deepEqual(f.sleeps,[250]);
+});
+
+test('real progress persistence errors retain safe causes and recover through the workflow step',async()=>{
+ let writes=0,loads=0;
+ const f=fixture(()=>{if(++writes===1)throw new Error('private SQL',{cause:new Error('storage caused object to be reset')});return {success:true,meta:{changes:1}};});
+ const repository=new D1KnowledgeWorkflowProgressRepository({database:f.database,logger:()=>{}});
+ const result=await executeRetryingWorkflowStep({step:{do:async(_n,_c,cb)=>cb(),sleepUntil:async()=>{}},name:'progress recovery',now:()=>0,load:async()=>({ok:true,value:++loads}),execute:async()=>repository.save({ownerId:'owner',runId:'run',stage:'Reviewing knowledge',updatedAt:'2026-10-28T00:00:00Z'})});
+ assert.equal(result.ok,true);assert.equal(writes,2);assert.equal(loads,2);assert(!JSON.stringify(f.logs).includes('private SQL'));
+});
+
+test('run lookup preserves quota diagnostics without exposing exception text',async()=>{
+ const {D1KnowledgeWorkflowRepository}=await import('../worker/knowledge-workflow-d1.js');
+ const f=fixture(()=>{throw new Error("D1_ERROR: exceeded D1's free tier daily row read limit: private SQL");});
+ const repository=new D1KnowledgeWorkflowRepository({database:f.database,logger:()=>{}});
+ assert.deepEqual(await repository.findById('owner','run'),{ok:false,error:{kind:'WorkflowPersistenceFailed',diagnosticToken:'d1-daily-quota'}});
 });

@@ -11,16 +11,16 @@ async function fixture(phase='per-point-quiz-loop') {
   const migrations=new URL('../worker/migrations/',import.meta.url);
   for(const name of (await readdir(migrations)).filter(n=>n.endsWith('.sql')).sort())db.exec(await readFile(new URL(name,migrations),'utf8'));
   const database={prepare(sql){let values=[];return {bind(...v){values=v;return this;},async first(){return db.prepare(sql).get(...values)??null;},async all(){return {success:true,results:db.prepare(sql).all(...values)};},async run(){return {success:true,meta:{changes:Number(db.prepare(sql).run(...values).changes)}};}};},async batch(statements){return Promise.all(statements.map(s=>s.run()));}};
-  let time=Date.parse('2026-10-16T12:00:00.000Z'),status='errored',events=0,restarts=0,dispatchFails=false,output;
+  let time=Date.parse('2026-10-16T12:00:00.000Z'),status='errored',events=0,restarts=0,dispatchFails=false,output,error;
   const now=()=>new Date(time).toISOString(),logger=()=>{};
   const service=createKnowledgeWorkflowService(new D1KnowledgeWorkflowRepository({database,logger}),{now,logger,createId:()=> 'run-auto'});
   const unwrap=r=>{assert.equal(r.ok,true,JSON.stringify(r.error));return r.value;};
   let run=unwrap(await service.createRun({ownerId:'owner-a',sourceId:'source-a',sourceRevision:1,canonicalSourceIdentity:'https://example.test/',contentSignature:'source',configDigests:{},idempotencyKey:'create-auto'})).run;
   for(const state of ['rights-assessment','robots-check','extraction-loop',...(phase==='per-point-quiz-loop'?['extraction-finalized','per-point-quiz-loop']:[])])run=unwrap(await service.advance({ownerId:run.ownerId,runId:run.runId,expectedRevision:run.revision,nextState:state,counts:{pages:11,knowledgePoints:31,acceptedQuizzes:1,pendingQuizzes:0}}));
   db.prepare("INSERT INTO library_sources VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run('owner-a','source-a','https://example.test/','https://example.test/','Fixture','','{}','[]','active',now(),now(),1);
-  const instance={id:'instance',status:async()=>({status,output}),restart:async()=>{if(dispatchFails)throw new Error('Test dispatch unavailable');restarts++;status='running';},resume:async()=>{},sendEvent:async()=>{if(dispatchFails)throw new Error('Test dispatch unavailable');events++;status='running';},pause:async()=>{},terminate:async()=>{}};
+  const instance={id:'instance',status:async()=>({status,output,error}),restart:async()=>{if(dispatchFails)throw new Error('Test dispatch unavailable');restarts++;status='running';},resume:async()=>{},sendEvent:async()=>{if(dispatchFails)throw new Error('Test dispatch unavailable');events++;status='running';},pause:async()=>{},terminate:async()=>{}};
   const dependencies={database,binding:{create:async()=>instance,get:async()=>instance},ownerId:'owner-a',now,logger};
-  return {db,service,dependencies,run,unwrap,advanceTime:ms=>{time+=ms;},setStatus:s=>{status=s;},setOutput:v=>{output=v;},failDispatch:()=>{dispatchFails=true;},counts:()=>({events,restarts}),read:async()=>unwrap(await service.status({ownerId:'owner-a',runId:'run-auto'})),tick:async()=>resumeInterruptedKnowledgeWorkflows(dependencies)};
+  return {db,service,dependencies,run,unwrap,advanceTime:ms=>{time+=ms;},setStatus:s=>{status=s;},setOutput:v=>{output=v;},setError:v=>{error=v;},failDispatch:()=>{dispatchFails=true;},counts:()=>({events,restarts}),read:async()=>unwrap(await service.status({ownerId:'owner-a',runId:'run-auto'})),tick:async()=>resumeInterruptedKnowledgeWorkflows(dependencies)};
 }
 
 test('crashed quiz execution waits two minutes from detection and resumes exact saved phase once',async()=>{
@@ -33,6 +33,14 @@ test('crashed quiz execution waits two minutes from detection and resumes exact 
     const resumed=await f.read();assert.equal(resumed.state,'per-point-quiz-loop');assert.deepEqual(resumed.counts,f.run.counts);assert.equal(resumed.revision,stopped.revision+1);
     assert.deepEqual(await f.tick(),{ok:true,value:0});assert.deepEqual(f.counts(),{events:0,restarts:1});
   }finally{f.db.close();}
+});
+
+test('a platform crash retains its safe cause instead of becoming an unexplained interruption',async()=>{
+ for(const [message,failureKind] of [['Worker exceeded CPU time limit.','WorkflowCpuTimeLimitExceeded'],['Too many subrequests.','WorkflowSubrequestLimitExceeded'],["exceeded D1's free tier daily row read limit: private SQL",'WorkflowExecutionStopped:d1-daily-quota'],['private unknown exception','WorkflowExecutionStopped']]){
+  const f=await fixture();try{
+   f.setError({name:'Error',message});assert.deepEqual(await f.tick(),{ok:true,value:0});assert.equal((await f.read()).failureKind,failureKind);
+  }finally{f.db.close();}
+ }
 });
 
 test('retryable waiting work receives the existing resume event without restarting the workflow',async()=>{
@@ -167,4 +175,36 @@ test('provider payment rejection waits for owner recovery instead of automatic r
   f.unwrap(await f.service.advance({ownerId:'owner-a',runId:f.run.runId,expectedRevision:f.run.revision,nextState:'retryable-failure',failureKind:'KnowledgeModelPaymentRequired'}));f.setStatus('waiting');f.advanceTime(3_600_000);
   const before=await f.read();assert.deepEqual(await f.tick(),{ok:true,value:0});assert.deepEqual(await f.read(),before);assert.deepEqual(f.counts(),{events:0,restarts:0});
  }finally{f.db.close();}
+});
+
+test('automatic recovery stops after four resumes without published progress; owner resume resets it',async()=>{
+ const f=await fixture();try{
+  for(let n=0;n<5;n++){
+   const run=await f.read();f.unwrap(await f.service.advance({ownerId:'owner-a',runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',failureKind:'WorkflowCpuTimeLimitExceeded'}));f.setStatus('waiting');f.advanceTime(120_000);
+   assert.deepEqual(await f.tick(),{ok:true,value:n<4?1:0});
+  }
+  const stopped=await f.read();assert.match(stopped.failureKind,/automatic-retries-exhausted/);assert.equal(f.counts().events,4);
+  f.advanceTime(3_600_000);assert.deepEqual(await f.tick(),{ok:true,value:0});assert.equal((await f.read()).revision,stopped.revision);
+  f.unwrap(await f.service.control({ownerId:'owner-a',runId:stopped.runId,expectedRevision:stopped.revision,action:'resume',idempotencyKey:'owner-recovery'}));
+  const run=await f.read();f.unwrap(await f.service.advance({ownerId:'owner-a',runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',failureKind:'WorkflowCpuTimeLimitExceeded'}));f.advanceTime(120_000);assert.deepEqual(await f.tick(),{ok:true,value:1});
+ }finally{f.db.close();}
+});
+
+test('new published progress keeps automatic recovery available',async()=>{
+ const f=await fixture();try{
+  for(let n=0;n<6;n++){
+   const run=await f.read();f.unwrap(await f.service.advance({ownerId:'owner-a',runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',counts:{...run.counts,acceptedQuizzes:run.counts.acceptedQuizzes+1},failureKind:'WorkflowExecutionStopped'}));f.setStatus('waiting');f.advanceTime(120_000);
+   assert.deepEqual(await f.tick(),{ok:true,value:1});
+  }
+ }finally{f.db.close();}
+});
+
+test('uncertain calls and credentials require owner action; daily quota waits until the next UTC day',async()=>{
+ for(const failureKind of ['WorkflowStageCallUncertain','KnowledgeModelCredentialMissing','KnowledgeModelRejected:http-401','WorkflowStagePersistenceFailed:d1-daily-quota']){
+  const f=await fixture();try{
+   f.unwrap(await f.service.advance({ownerId:'owner-a',runId:f.run.runId,expectedRevision:f.run.revision,nextState:'retryable-failure',failureKind}));f.setStatus('waiting');f.advanceTime(3_600_000);
+   assert.deepEqual(await f.tick(),{ok:true,value:0});
+   if(failureKind.endsWith('d1-daily-quota')){f.advanceTime(24*3_600_000);assert.deepEqual(await f.tick(),{ok:true,value:1});}
+  }finally{f.db.close();}
+ }
 });

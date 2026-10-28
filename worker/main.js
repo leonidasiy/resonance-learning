@@ -212,7 +212,7 @@ import { createReminderRuntime } from "./reminders/runtime.js";
  *   readonly resume: () => Promise<void>,
  *   readonly restart?: () => Promise<void>,
  *   readonly terminate: (options?: { readonly rollback?: boolean }) => Promise<void>,
- *   readonly status?: () => Promise<{ readonly status: string, readonly output?: unknown }>,
+ *   readonly status?: () => Promise<{ readonly status: string, readonly output?: unknown, readonly error?: {readonly name:string,readonly message:string} }>,
  *   readonly sendEvent: (event: { readonly type: string, readonly payload?: unknown }) => Promise<void>
  * }} KnowledgeWorkflowInstance
  */

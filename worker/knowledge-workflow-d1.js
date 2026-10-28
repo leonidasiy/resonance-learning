@@ -82,7 +82,7 @@ export class D1KnowledgeWorkflowRepository {
       return run === null || run.ownerId !== ownerId ? this.#failed('findByIdempotency',started) : { ok: true, value: freeze({ ...run, configDigests: freeze({ ...run.configDigests }), counts: freeze({ ...run.counts }) }) };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"findByIdempotency",durationMs:Math.max(0,Date.now()-started), ownerId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -98,7 +98,7 @@ export class D1KnowledgeWorkflowRepository {
       return run === null || run.ownerId !== ownerId ? this.#failed('findById',started) : { ok: true, value: freeze({ ...run, configDigests: freeze({ ...run.configDigests }), counts: freeze({ ...run.counts }) }) };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"findById",durationMs:Math.max(0,Date.now()-started), ownerId, runId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -116,7 +116,7 @@ export class D1KnowledgeWorkflowRepository {
         : { ok: true, value: freeze({ ...run, configDigests: freeze({ ...run.configDigests }), counts: freeze({ ...run.counts }) }) };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"findLatestBySource",durationMs:Math.max(0,Date.now()-started), ownerId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -140,7 +140,7 @@ export class D1KnowledgeWorkflowRepository {
       return { ok: true, value: Object.freeze(runs) };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"listBySource",durationMs:Math.max(0,Date.now()-started), ownerId, runId: sourceId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -155,7 +155,7 @@ export class D1KnowledgeWorkflowRepository {
       return reuse === null ? this.#failed('findGlobalReuse',started) : { ok: true, value: reuse };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"findGlobalReuse",durationMs:Math.max(0,Date.now()-started), failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -171,7 +171,7 @@ export class D1KnowledgeWorkflowRepository {
       return { ok: true, value: null };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"insert",durationMs:Math.max(0,Date.now()-started), ownerId: run.ownerId, runId: run.runId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -189,7 +189,7 @@ export class D1KnowledgeWorkflowRepository {
       return { ok: true, value: command.next };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"update",durationMs:Math.max(0,Date.now()-started), ownerId: command.ownerId, runId: command.runId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -205,7 +205,7 @@ export class D1KnowledgeWorkflowRepository {
       return run === null || run.ownerId !== ownerId ? this.#failed('findControl',started) : { ok: true, value: freeze({ fingerprint: row.command_fingerprint, run }) };
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"findControl",durationMs:Math.max(0,Date.now()-started), ownerId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -218,7 +218,7 @@ export class D1KnowledgeWorkflowRepository {
       return changedOne(result) ? { ok: true, value: null } : this.#failed('recordControl',started);
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"recordControl",durationMs:Math.max(0,Date.now()-started), ownerId: command.ownerId, runId: command.runId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -231,7 +231,7 @@ export class D1KnowledgeWorkflowRepository {
       return changedOne(result) ? { ok: true, value: null } : this.#failed('markReuse',started);
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"markReuse",durationMs:Math.max(0,Date.now()-started), failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -247,7 +247,7 @@ export class D1KnowledgeWorkflowRepository {
       return result.success === true ? { ok: true, value: null } : this.#failed('invalidateReuse',started);
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"invalidateReuse",durationMs:Math.max(0,Date.now()-started), failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 
@@ -265,7 +265,7 @@ export class D1KnowledgeWorkflowRepository {
       return current.ok && current.value?.state === "abandoned" ? { ok: true, value: null } : this.#failed('markAbandoned',started);
     } catch (error) {
       this.#logger({ event: "knowledge-workflow-d1-failure", action:"markAbandoned",durationMs:Math.max(0,Date.now()-started), ownerId: command.run.ownerId, runId: command.run.runId, failureKind: "WorkflowPersistenceFailed",diagnosticToken:workflowPersistenceDiagnostic(error) });
-      return { ok: false, error: { kind: "WorkflowPersistenceFailed" } };
+      return { ok: false, error: { kind: "WorkflowPersistenceFailed", diagnosticToken: workflowPersistenceDiagnostic(error) } };
     }
   }
 }

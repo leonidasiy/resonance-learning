@@ -8,7 +8,7 @@ import { parseWorkflowProgress } from '../src/features/knowledge-workflows/progr
 /** @typedef {import('../src/features/knowledge-workflows/workflow.js').KnowledgeWorkflowRun} KnowledgeWorkflowRun */
 /** @typedef {import('../src/features/knowledge-workflows/progress.js').WorkflowProgress} WorkflowProgress */
 /** @typedef {{readonly ownerId:string,readonly runId:string,readonly currentUrl?:string|null,readonly pageTitle?:string|null,readonly sectionTitle?:string|null,readonly stage?:string|null,readonly updatedAt:string}} ProgressWrite */
-/** @template T @typedef {{ok:true,value:T}|{ok:false,error:{kind:string}}} Result */
+/** @template T @typedef {{ok:true,value:T}|{ok:false,error:{kind:string,diagnosticToken?:string}}} Result */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
 function record(value) { return typeof value === 'object' && value !== null && !Array.isArray(value); }
 /** @param {unknown} value @returns {value is string} */
@@ -44,7 +44,7 @@ export class D1KnowledgeWorkflowProgressRepository {
       return {ok:false,error:{kind:'WorkflowProgressPersistenceFailed'}};
     } catch (error) {
       this.#logger({event:'workflow-progress-save-failure',ownerId:command.ownerId,runId:command.runId,failureKind:'WorkflowProgressPersistenceFailed',diagnosticToken:workflowPersistenceDiagnostic(error)});
-      return {ok:false,error:{kind:'WorkflowProgressPersistenceFailed'}};
+      return {ok:false,error:{kind:'WorkflowProgressPersistenceFailed',diagnosticToken:workflowPersistenceDiagnostic(error)}};
     }
   }
   /** Current run only; source/run ownership is checked in the database as well as

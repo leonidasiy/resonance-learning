@@ -4,6 +4,7 @@ import {createKnowledgeWorkflowService, isWorkflowRetryStage} from '../src/featu
 import {D1KnowledgeWorkflowRepository} from './knowledge-workflow-d1.js';
 import {deliverKnowledgeWorkflowControl, workflowInstanceId, workflowControlRollback} from './main.js';
 import {workflowPersistenceDiagnostic} from './knowledge-workflow-logging.js';
+import {workflowExecutionFailure} from './knowledge-workflow-step.js';
 
 /** Resume only interrupted work; explicit pauses, consent decisions and terminal runs stay authoritative.
  * @param {{database:import('./knowledge-workflow-d1.js').D1DatabasePort,binding:import('./main.js').KnowledgeWorkflowBinding,ownerId:string,now:()=>string,logger:(entry:import('./knowledge-workflow-logging.js').KnowledgeWorkflowLogEntry)=>void}} dependencies
@@ -45,15 +46,35 @@ export async function resumeInterruptedKnowledgeWorkflows({database,binding,owne
           if(status!=='errored')continue;
           // Persist discovery time: an old checkpoint is not the time the crash happened.
           operation='mark-interruption';
-          const marked=await service.advance({ownerId,runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',failureKind:'WorkflowExecutionStopped'});
+          const cause=workflowExecutionFailure(new Error(typeof snapshot.error?.message==='string'?snapshot.error.message:''));
+          const failureKind=`${cause.kind}${cause.detailDiagnosticToken===undefined?'':`:${cause.detailDiagnosticToken}`}`;
+          const marked=await service.advance({ownerId,runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',failureKind});
           if(!marked.ok&&marked.error.kind!=='WorkflowControlStale')throw new Error(marked.error.kind);
           continue;
         }
-        if(run.failureKind==='KnowledgeModelPaymentRequired')continue;
+        const failure=run.failureKind??'';
+        if(/KnowledgeModelPaymentRequired|Credential|WorkflowStageCallUncertain|:http-(401|402|403)|sqlite-(constraint|schema|too-big|limit)|automatic-retries-exhausted/u.test(failure))continue;
+        if(failure.includes('d1-daily-quota')&&now().slice(0,10)===run.updatedAt.slice(0,10))continue;
         if(currentTime-Date.parse(run.updatedAt)<120_000)continue;
         if(run.state==='awaiting-time-limit-decision'&&(run.extractionDeadlineAt===null||currentTime<Date.parse(run.extractionDeadlineAt)+120_000))continue;
         // A pending waitForEvent can still report running; the persisted stopped state authorizes its resume event.
         if(!['running','waiting','errored','complete'].includes(status))continue;
+        if(run.state==='retryable-failure'){
+          operation='check-recovery-progress';
+          const controls=await database.prepare('SELECT idempotency_key,result_json FROM knowledge_workflow_controls WHERE owner_id=? AND run_id=? ORDER BY occurred_at DESC,control_id DESC LIMIT 4').bind(ownerId,run.runId).all();
+          if(!controls.success)throw new Error('WorkflowAutoResumeQueryFailed');
+          const stalled=controls.results.length===4&&controls.results.every(row=>{
+            if(!row||typeof row!=='object'||!('idempotency_key'in row)||typeof row.idempotency_key!=='string'||!row.idempotency_key.startsWith('auto-resume:')||!('result_json'in row)||typeof row.result_json!=='string')return false;
+            const prior=JSON.parse(row.result_json);
+            return prior.counts&&['pages','knowledgePoints','acceptedQuizzes','pendingQuizzes'].every(key=>prior.counts[key]===run.counts[/** @type {keyof typeof run.counts} */(key)]);
+          });
+          if(stalled){
+            const stopped=await service.advance({ownerId,runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',counts:run.counts,failureKind:`${failure}:automatic-retries-exhausted`});
+            if(!stopped.ok&&stopped.error.kind!=='WorkflowControlStale')throw new Error(stopped.error.kind);
+            logger({event:'knowledge-workflow-auto-resume-exhausted',ownerId,runId:run.runId,failureKind:'WorkflowAutomaticRetriesExhausted',count:4});
+            continue;
+          }
+        }
         const command={ownerId,runId:run.runId,expectedRevision:run.revision,action:'resume',idempotencyKey:`auto-resume:${crypto.randomUUID()}`};
         operation='resume-control';
         const controlled=await service.control(command);

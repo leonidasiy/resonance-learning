@@ -112,3 +112,26 @@ Deno.test("only an observed CPU failure enables reduced work on subsequent attem
   assertEquals(result.ok,true);assertEquals(flags.join(","),cpu?"false,true":"false,false");
  }
 });
+
+Deno.test("transient database and subrequest interruptions recover from fresh checkpoints",async()=>{
+ for(const message of ['Too many subrequests.','D1 DB is overloaded','SQLITE_BUSY','Network connection lost','storage caused object to be reset']){
+  let loads=0,calls=0;const flags=/** @type {boolean[]} */([]);
+  const result=await executeRetryingWorkflowStep({step:{do:async(_n,_c,cb)=>cb(),sleepUntil:async()=>{}},name:'interruption',now:()=>0,load:async()=>({ok:true,value:++loads}),execute:async(run,_attempt,limited)=>{
+   assertEquals(run,++calls);flags.push(limited===true);if(calls===1)throw new Error('Wrapped failure',{cause:new Error(message)});return {ok:true,value:null};
+  }});
+  assertEquals(result.ok,true);assertEquals(calls,2);assertEquals(flags.join(','),message==='Too many subrequests.'?'false,true':'false,false');
+ }
+});
+
+Deno.test("typed transient persistence failures retry but permanent and uncertain failures do not",async()=>{
+ for(const diagnostic of ['d1-reset','sqlite-busy','d1-overloaded','subrequest-limit','d1-daily-quota','sqlite-constraint','sqlite-schema']){
+  let calls=0;
+  const result=await executeRetryingWorkflowStep({step:{do:async(_n,_c,cb)=>cb(),sleepUntil:async()=>{}},name:'database',now:()=>0,load:async()=>({ok:true,value:null}),execute:async()=>{calls++;return {ok:false,error:{kind:'WorkflowProgressPersistenceFailed',detailDiagnosticToken:diagnostic}};}});
+  assertEquals(result.ok,false);assertEquals(calls,['d1-reset','sqlite-busy','d1-overloaded','subrequest-limit'].includes(diagnostic)?4:1);
+ }
+ for(const kind of ['WorkflowStageCallUncertain','KnowledgeModelPaymentRequired','KnowledgeModelCredentialMissing','KnowledgeReviewOutputInvalid']){
+  let calls=0;
+  await executeRetryingWorkflowStep({step:{do:async(_n,_c,cb)=>cb(),sleepUntil:async()=>{throw new Error('Unexpected retry');}},name:'protected',now:()=>0,load:async()=>({ok:true,value:null}),execute:async()=>{calls++;return {ok:false,error:{kind,detailDiagnosticToken:'d1-reset'}};}});
+  assertEquals(calls,1);
+ }
+});

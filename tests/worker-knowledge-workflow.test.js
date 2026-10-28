@@ -202,8 +202,8 @@ Deno.test("source workflow status does not mislabel a non-planner retryable fail
     const body = /** @type {{ readonly result: Record<string, unknown> }} */ (await response.json());
     assertEquals(body.result.reasonCode, "retryable-failure");
     assertEquals(body.result.message, failure === "WorkflowStageCallUncertain"
-      ? "Processing paused because a request's result could not be confirmed. Your extracted knowledge and completed quizzes have been retained."
-      : "Processing stopped because the workflow encountered a retryable error. Retry processing to try again.");
+      ? "Processing paused because an AI request's result could not be confirmed. It may already have been billed, so it will not be sent again automatically. Choose Continue processing to authorize recovery of unfinished work. Your extracted knowledge and completed quizzes have been retained."
+      : "Processing stopped with an unclassified error. Your saved knowledge and quizzes have been retained. Continue processing to resume; if it stops again, report this source so the site administrator can investigate the backend logs.");
   }
 });
 
@@ -214,6 +214,32 @@ Deno.test("source workflow status explains an expired extraction as retryable", 
   const body = /** @type {{ readonly result: Record<string, unknown> }} */ (await response.json());
   assertEquals(body.result.reasonCode, "retryable-failure");
   assertEquals(body.result.message, "Automatic extraction stopped after its processing deadline elapsed. Any saved progress has been retained.");
+});
+
+Deno.test('source cards explain resource, provider, persistence and exhausted recovery failures safely',async()=>{
+  for(const [failure,reason] of [
+    ['WorkflowCpuTimeLimitExceeded',"CPU time limit"],
+    ['WorkflowSubrequestLimitExceeded','request limit'],
+    ['WorkflowStagePersistenceFailed:d1-daily-quota','midnight UTC'],
+    ['WorkflowExecutionStopped:d1-reset','database could not reliably'],
+    ['KnowledgeModelCredentialMissing','administrator must correct'],
+    ['KnowledgeModelRejected:http-401','credentials'],
+    ['KnowledgeModelPaymentRequired','HTTP 402'],
+    ['KnowledgeReviewOutputInvalid','format or evidence checks'],
+    ['KnowledgeBrowserCaptureTimedOut','loaded or captured'],
+    ['ExtractionCoverageIncomplete','not been marked complete'],
+    ['WorkflowCpuTimeLimitExceeded:automatic-retries-exhausted','four resumes'],
+    ['UnexpectedFailure:private-token-secret','unclassified error'],
+  ]){
+    const fixture=makeFixture({sourceState:'retryable-failure',sourceFailureKind:failure});
+    const response=await fixture.worker.fetch(new Request('https://worker.example/api/knowledge-workflows/source-status?sourceId=source-a',{headers:{origin:'https://app.example'}}));
+    assertEquals(response.status,200);
+    const body=await response.json();
+    assertEquals(body.result.reasonCode,'retryable-failure');
+    assertEquals(body.result.message.includes(reason),true);
+    assertEquals(/retained/i.test(body.result.message),true);
+    assertEquals(body.result.message.includes('private-token-secret'),false);
+  }
 });
 
 Deno.test("authorized material route derives owner, decodes pasted text, and preserves the attestation", async () => {

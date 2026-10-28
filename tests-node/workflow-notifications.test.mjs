@@ -5,7 +5,7 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { notifyKnowledgeWorkflowOutcome } from "../worker/knowledge-workflow-notifications.js";
 import { isWorkflowRetryStage } from "../src/features/knowledge-workflows/workflow.js";
-import { executeRetryingWorkflowStep, requiresWorkflowUpload } from "../worker/knowledge-workflow-step.js";
+import { executeRetryingWorkflowStep, requiresWorkflowUpload, workflowExecutionFailure } from "../worker/knowledge-workflow-step.js";
 
 const at = "2026-10-02T12:00:00.000Z";
 const run = {
@@ -245,6 +245,7 @@ test("actual workflow entry sends before retention/waits and preserves extractio
       createFirecrawlWorkflowBrowser:noOp,
       createHybridBrowserBudget:noOp,
       requiresWorkflowUpload,
+      workflowExecutionFailure,
       createAcquisitionClient: () => ({mediaCapability:{}}),
       createAcquisitionWorkflowBrowser: noOp,
       ACQUISITION_POLICY: {},
