@@ -714,6 +714,18 @@ export function createExtractionRunner(dependencies) {
 }
 
 /**
+ * Advance the fixed uploaded-section inventory without another semantic planning call.
+ * @param {ExtractionPlan} plan
+ * @param {readonly string[]} sectionUrls
+ * @param {ExtractionScratchpad} scratchpad
+ * @returns {ExtractionPlan}
+ */
+export function advanceAuthorizedMaterialPlan(plan, sectionUrls, scratchpad) {
+  const remaining = sectionUrls.filter(url => !scratchpad.processedUrls.includes(url) && !scratchpad.failedPages?.some(page => page.url === url) && (!scratchpad.retryingFailedPages || scratchpad.frontier?.includes(url)));
+  return boundAuthorizedMaterialPlan({ ...plan, frontier: remaining, stopDecision: { ...plan.stopDecision, decision: "continue", rationale: "Continue through every pending supplied section." } }, remaining, scratchpad);
+}
+
+/**
  * Bound a plan to the source content the learner authorized.
  * Once every supplied section has been observed, model-suggested goals and gaps that
  * refer to unavailable source content cannot be resolved by another fetch.

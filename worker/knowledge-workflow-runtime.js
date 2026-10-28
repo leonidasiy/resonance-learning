@@ -24,7 +24,7 @@ import {AgentExecutionBoundaryFailure} from '../src/features/knowledge-workflows
 import { isKnowledgeWorkflowRun } from "../src/features/knowledge-workflows/workflow.js";
 import { acquireImageBytes, createMediaPublicEgress } from "../src/features/knowledge-workflows/media.js";
 import { createKnowledgeWorkflowExecutor } from "../src/features/knowledge-workflows/executor.js";
-import { boundAuthorizedMaterialPlan, createExtractionRunner, isExtractionPlan, isKnowledgeCandidate, isVisualMediaReference } from "../src/features/knowledge-workflows/extraction.js";
+import { advanceAuthorizedMaterialPlan, boundAuthorizedMaterialPlan, createExtractionRunner, isExtractionPlan, isKnowledgeCandidate, isVisualMediaReference } from "../src/features/knowledge-workflows/extraction.js";
 import { createRightsAssessor } from "../src/features/knowledge-workflows/rights.js";
 import { createRobotsGate } from "../src/features/knowledge-workflows/robots.js";
 import { verifyPublicWebpage } from './webpage-access.js';
@@ -1569,13 +1569,8 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         const remaining = sectionUrls.filter((sectionUrl) => !input.scratchpad.processedUrls.includes(sectionUrl) && !input.scratchpad.failedPages?.some(page=>page.url===sectionUrl) && (!input.scratchpad.retryingFailedPages || input.scratchpad.frontier?.includes(sectionUrl)));
         return /** @type {const} */ ({ ok: true, value: boundAuthorizedMaterialPlan({ ...plan, frontier: remaining }, remaining, input.scratchpad) });
       },
-      replan: async (input) => {
-        const result = await requestExtractionPlan({ taskId: `scraper-material-replan-${input.observation.url}`, input: { operation: "replan-authorized-material", ...input, availableSections: sectionSummary, embeddedMedia }, maxOutputTokens: 2048, systemPrompt: `${extractionPlanPrompt} ${materialInventoryPrompt} Reassess coverage after this observation and prioritize unresolved high gaps.`, repairPrompt: `${extractionPlanRepairPrompt} ${materialInventoryPrompt} Reassess coverage after this observation and prioritize unresolved high gaps.`, generate: (command) => generatePlanner(run, command), logger: dependencies.logger });
-        if (!result.ok) return result;
-        const plan = /** @type {import("../src/features/knowledge-workflows/extraction.js").ExtractionPlan} */ (result.value);
-        const remaining = sectionUrls.filter((sectionUrl) => !input.scratchpad.processedUrls.includes(sectionUrl) && !input.scratchpad.failedPages?.some(page=>page.url===sectionUrl) && (!input.scratchpad.retryingFailedPages || input.scratchpad.frontier?.includes(sectionUrl)));
-        return /** @type {const} */ ({ ok: true, value: boundAuthorizedMaterialPlan({ ...plan, frontier: remaining }, remaining, input.scratchpad) });
-      },
+      // Every section is already mandatory; extraction and review assess its content.
+      replan: async ({ previous, scratchpad }) => ({ ok: true, value: advanceAuthorizedMaterialPlan({ ...previous, revision: previous.revision + 1 }, sectionUrls, scratchpad) }),
     };
     const signature = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([material.contentDigest, material.sections, dependencies.configSnapshots["knowledge-scraper"].digest, material.mode === "image" ? materialImagePrompt : materialBatchPrompt])));
     /** @type {NonNullable<import("../src/features/knowledge-workflows/extraction.js").ExtractionDependencies["batchAcquirer"]>} */

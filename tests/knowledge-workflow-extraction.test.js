@@ -1,6 +1,6 @@
 // @ts-check
 
-import { createExtractionRunner } from "../src/features/knowledge-workflows/extraction.js";
+import { advanceAuthorizedMaterialPlan, createExtractionRunner } from "../src/features/knowledge-workflows/extraction.js";
 
 /** @template T @param {T} actual @param {T} expected */
 function assertEquals(actual, expected) { if (!Object.is(actual, expected)) throw new Error(`Expected ${String(expected)}, received ${String(actual)}.`); }
@@ -1033,4 +1033,58 @@ Deno.test('early draft handoff uses the same publication checks before full sour
  }}});
  const result=await runner.run({ownerId:'owner-a',runId:'run-a',sourceId:'source-a',sourceRevision:1,rootUrl:url,startedAtMs:0,deadlineAtMs:1800000});
  if(!result.ok)throw Error(JSON.stringify(result.error));assertEquals(result.value.state,'completed');assertEquals(fixture.points.length,1);
+});
+
+Deno.test("fixed material advancement retains semantic goals and limits failed-page retries to approved inventory", async () => {
+  const fixture = setup();
+  const loaded = await fixture.dependencies.scratchpad.load({ ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1 });
+  if (!loaded.ok) throw new Error("Fixture initialization failed.");
+  const planned = await fixture.dependencies.planner.plan({ rootUrl: "https://example.test", scratchpad: loaded.value });
+  if (!planned.ok) throw new Error("Fixture initialization failed.");
+  const urls = ["https://example.test/a", "https://example.test/b", "https://example.test/c", "https://example.test/d"];
+  const gap = { id: "gap-a", priority: /** @type {const} */ ("high"), description: "Observe the remaining supplied explanation." };
+  const previous = { ...planned.value, unresolvedGaps: [gap] };
+  const progress = { ...loaded.value, processedUrls: [urls[0]], failedPages: [{ url: urls[1], title: "B", failureKind: "FixtureFailed", attempts: 1, failedAt: fixture.dependencies.now() }] };
+  const advanced = advanceAuthorizedMaterialPlan(previous, urls, progress);
+  assertEquals(JSON.stringify(advanced.frontier), JSON.stringify(urls.slice(2)));
+  assertEquals(advanced.coverageGoals, previous.coverageGoals);
+  assertEquals(advanced.unresolvedGaps, previous.unresolvedGaps);
+  assertEquals(advanced.stopDecision.decision, "continue");
+  const retry = advanceAuthorizedMaterialPlan(previous, urls, { ...progress, failedPages: [], retryingFailedPages: true, frontier: [urls[1]] });
+  assertEquals(JSON.stringify(retry.frontier), JSON.stringify([urls[1]]));
+  const exhausted = advanceAuthorizedMaterialPlan(previous, urls, { ...progress, processedUrls: [urls[0], urls[2], urls[3]], coverage: ["goal-a"] });
+  assertEquals(exhausted.stopDecision.decision, "complete");
+  assertEquals(exhausted.coverageGoals.length, 1);
+  assertEquals(exhausted.unresolvedGaps.length, 0);
+});
+
+Deno.test("fixed material traversal resumes every section with one semantic plan and retains candidate review", async () => {
+  const fixture = setup();
+  const urls = ["https://example.test/a", "https://example.test/b", "https://example.test/c"];
+  let plans = 0, reviews = 0;
+  /** @type {string[]} */ const fetched = [];
+  const runner = createExtractionRunner({
+    ...fixture.dependencies,
+    orderedUrls: urls,
+    policy: { ...fixture.dependencies.policy, maximumPagesPerExecution: 1 },
+    planner: {
+      async plan(input) { plans++; return fixture.dependencies.planner.plan(input); },
+      async replan({ previous, scratchpad }) { return { ok: true, value: advanceAuthorizedMaterialPlan({ ...previous, revision: previous.revision + 1 }, urls, scratchpad) }; },
+    },
+    acquirer: { async fetchPage(input) { fetched.push(input.url); return fixture.dependencies.acquirer.fetchPage(input); } },
+    reviewer: { async review(point) { reviews++; return { ok: true, value: point }; } },
+  });
+  const command = { ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1, rootUrl: "https://example.test", startedAtMs: 0, deadlineAtMs: 1_800_000 };
+  for (let index = 0; index < urls.length; index++) {
+    const result = await runner.run(command);
+    assertEquals(result.ok, true);
+    if (!result.ok) return;
+    assertEquals(result.value.state, index === urls.length - 1 ? "completed" : "awaiting-time-limit-decision");
+    assertEquals(result.value.pagesProcessed, index + 1);
+    assertEquals(result.value.scratchpad.planCheckpoint?.plan.revision, index + 2);
+  }
+  assertEquals(JSON.stringify(fetched), JSON.stringify(urls));
+  assertEquals(plans, 1);
+  assertEquals(reviews, 1);
+  assertEquals(fixture.points.length, 1);
 });
