@@ -251,3 +251,20 @@ Deno.test("agent private working usage retains request receipts, actual cost and
     for(const key of /** @type {const} */(["durationMs","costNanodollars","cachedInputTokens","cacheWriteInputTokens"]))assertEquals(payload.usage[key],observations[key]??null);
   }
 });
+
+Deno.test("indexed agent input digests preserve historical Unicode code-point identities", async () => {
+  const store=memory();
+  const runtime=createKnowledgeWorkflowAgentRuntime({model:{generate:async()=>({ok:true,value:{output:{answer:'synthetic'},requestId:'fixture',inputTokens:1,outputTokens:1,reasoningTrace:null}})},memory:store,eventLedger:{append:async()=>null},compactor:createContextCompactor({now:()=>"2026-10-28T00:00:00Z",digest:value=>`digest:${value.length}`,appendRecord:async()=>null,logger:()=>{}}),configSnapshots:await configurationSnapshots(),now:()=>"2026-10-28T00:00:00Z",logger:()=>{}});
+  const namespace=await store.createNamespace({ownerId:'digest-owner',runId:'digest-run',role:'question-generator'});
+  if(!namespace.ok)throw new Error(namespace.error.kind);
+  for(const value of ['', 'ASCII conditions', '音乐与条件', '🎼𝄞😀', '\ud800A\udc00', 'A🎼中𝄞Z']) {
+    const input={value};let hash=2166136261;
+    for(const character of JSON.stringify(input)){hash^=character.codePointAt(0)??0;hash=Math.imul(hash,16777619);}
+    const expected=`sha256:runtime-${(hash>>>0).toString(16).padStart(8,'0')}`;
+    const result=await runtime.run({ownerId:'digest-owner',runId:'digest-run',role:'question-generator',taskId:`digest-${expected}`,systemPrompt:'Synthetic instruction',input,maxOutputTokens:16});
+    assertEquals(result.ok,true);
+    const records=await store.listRecords(namespace.value);if(!records.ok)throw new Error(records.error.kind);
+    const payload=/** @type {Record<string,unknown>} */(records.value.at(-1)?.payload);
+    assertEquals(payload.inputDigest,expected);
+  }
+});

@@ -27,9 +27,11 @@ function positiveInteger(value) { return typeof value === "number" && Number.isS
 /** @param {string} value @returns {string} */
 function stableDigest(value) {
   let hash = 2166136261;
-  for (const character of value) {
-    hash ^= character.codePointAt(0) ?? 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const point = value.codePointAt(index) ?? 0;
+    hash ^= point;
     hash = Math.imul(hash, 16777619);
+    if (point > 0xffff) index += 1;
   }
   return `sha256:runtime-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
