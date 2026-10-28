@@ -364,9 +364,9 @@ Deno.test("Failed file upload keeps selected file and settings for a retry from 
   form.set("attested", "on");
   await page.submit(form);
   assert(
-    page.render().includes("sample.pdf") &&
+    !/name="file"[^>]*required/.test(page.render()) &&
       !page.render().includes('name="attested"'),
-    "Retained file is visible without an attestation gate.",
+    "Retained file can be retried without reselection or an attestation gate.",
   );
   const rendered = new FormData();
   rendered.set("title", "PDF draft");
@@ -542,22 +542,22 @@ Deno.test("Upload authorizes text/documents/images without checkbox; image mode 
   page.select("pdf"); assert(!/name="imageProcessing"[^>]*checked/.test(page.render()),"Switching to PDF stays text-first.");
 });
 
-Deno.test("Upload bounds selected filenames behind an accessible full-name disclosure", () => {
-  const page = createUploadPage(deps);
+Deno.test("Upload uses the native file control without a duplicate filename section", async () => {
   for (const input of ["documents", "pdf", "images"]) {
-    page.select(input);
-    assert(page.render().includes('data-upload-files hidden'), "Empty selection has no disclosure.");
-    const name = 'long <synthetic> & filename '.repeat(10) + (input === "pdf" ? ".pdf" : input === "images" ? ".png" : ".txt");
+    const name = input === "pdf" ? "sample.pdf" : input === "images" ? "sample.png" : "sample.txt";
+    const page = createUploadPage({...deps, upload: async (_id, form) => {
+      const file = form.get("file");
+      assert(file instanceof File && file.name === name, "The selected file survives a rerender.");
+      return {ok:true,message:"Uploaded"};
+    }});
+    await page.select(input);
     const form = new FormData(); form.set("title", "Keep my title");
     form.set("file", new File(["fixture"], name)); page.remember(form);
     const html = page.render();
-    assert(html.includes('aria-describedby="upload-filenames"'), "Native input retains full filename description.");
-    assert(html.includes('data-focus-key="upload-filenames"'), "Background processing rerenders must preserve disclosure focus.");
-    assert(html.includes('<details data-upload-files>') && html.includes('<summary data-focus-key="upload-filenames">Selected filenames</summary>'), "Long names start collapsed behind a keyboard disclosure.");
-    assert(html.includes('id="upload-filenames">' + name.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")), "Full filename remains escaped and untruncated.");
-    assert(html.includes('value="Keep my title"'), "Filename never replaces an edited title.");
-    page.remember(new FormData());
-    assert(!page.render().includes('data-upload-files hidden'), "Memory-backed selection survives a native-input rerender.");
+    assert(!html.includes("Selected filenames") && !html.includes("upload-filenames") && !html.includes("data-upload-files"), "No duplicate section or dangling accessibility reference.");
+    assert(html.includes('type="file"') && html.includes(' multiple ') === (input === "images"), "Only Images supports multiple selection.");
+    assert(html.includes('value="Keep my title"'), "Selection preserves the edited title.");
+    assert(await page.submit(new FormData()), "Retained selection remains usable.");
   }
 });
 Deno.test("PDF pages has a short label and associated examples without changing text-first defaults", () => {

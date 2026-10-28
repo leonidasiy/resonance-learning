@@ -9,7 +9,8 @@ import { associateWebpageImages, imageHash, requestWebpageImagePurpose, webpageI
 import { createWebpageImageCache } from './webpage-image-cache.js';
 import { createJevDecisionModel, JEV_GRADER_CONFIGURATION } from './jev-answer-grader.js';
 import { capturedImageCaptionPrompt, capturedImageCaptionSchema, isCapturedImageCaption, capturedImageDecision, selectCapturedImages } from './url-capture-association.js';
-import { URL_CAPTURE_TYPE, parseUrlCapture } from '../src/features/knowledge-workflows/url-capture.js';
+import { URL_CAPTURE_TYPE } from '../src/features/knowledge-workflows/url-capture.js';
+import { extractMaterialImages } from '../src/features/knowledge-workflows/material.js';
 import { auditMaterialImageCoverage } from './material-image-coverage.js';
 import { requestCoveredMaterialText } from './material-text-coverage.js';
 import { requestWebpageFacts, createWebpageAttemptPolicy, isWebpageEvidence, webpageFactsPrompt, knowledgeSelectionPolicy } from './webpage-facts.js';
@@ -1420,7 +1421,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     if(!run.materialId||!dependencies.material||!points.length)return {ok:true,value:null};
     const stored=await dependencies.material.read(run.ownerId,run.runId);
     if(!stored.ok)return stored;
-    if(stored.value?.material.mediaType!==URL_CAPTURE_TYPE)return {ok:true,value:null};
+    if(!stored.value||stored.value.material.mode==='image'||![URL_CAPTURE_TYPE,'application/pdf','application/vnd.openxmlformats-officedocument.presentationml.presentation'].includes(stored.value.material.mediaType))return {ok:true,value:null};
     const storedMaterial=stored.value,material=storedMaterial.material;
     const signature=await imageHash(new TextEncoder().encode(JSON.stringify({digest:material.contentDigest,points:points.map(({id,summary,normalizedHash,evidenceAnchors})=>({id,summary,normalizedHash,evidenceAnchors})),model:dependencies.gradingModel??JEV_GRADER_CONFIGURATION.requestedModel,...(dependencies.endpoint!=="https://openrouter.ai/api/v1/chat/completions"?{endpoint:dependencies.endpoint}:{}),threshold:0.8,associationVersion:1,captionConfig:dependencies.configSnapshots['rights-assessor'].digest,captionProtocol:dependencies.modelProtocols?.['rights-assessor'],protocol:capturedImageCaptionPrompt})));
     return stages.run(run,`captured-image-associations:${signature}`,signature,async()=>{
@@ -1428,9 +1429,13 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       const original=await dependencies.materialContent.read(run.ownerId,storedMaterial.objectKey,{sourceId:run.sourceId,runId:run.runId,sourceRevision:run.sourceRevision,digest:material.contentDigest});
       if(!original.ok)return original;
       if((await imageHash(original.value)).slice(7)!==material.contentDigest.replace(/^sha256:/u,''))return {ok:false,error:{kind:'UploadedImageHashMismatch'}};
-      const captured=parseUrlCapture(original.value);
-      if(!captured.ok)return captured;
-      if(material.ownerId!==run.ownerId||material.runId!==run.runId||material.sourceId!==run.sourceId||material.sourceRevision!==run.sourceRevision||storedMaterial.materialId!==run.materialId||captured.value.sourceUrl!==material.sourceUrl||material.sourceUrl!==run.canonicalSourceIdentity)return {ok:false,error:{kind:'WorkflowMaterialInvalid'}};
+      if(material.ownerId!==run.ownerId||material.runId!==run.runId||material.sourceId!==run.sourceId||material.sourceRevision!==run.sourceRevision||storedMaterial.materialId!==run.materialId||material.sourceUrl!==run.canonicalSourceIdentity)return {ok:false,error:{kind:'WorkflowMaterialInvalid'}};
+      const captured=await extractMaterialImages(material,original.value);
+      if(!captured.ok){
+        if(material.mediaType===URL_CAPTURE_TYPE)return captured;
+        dependencies.logger({event:'knowledge-workflow-material-images-failure',ownerId:run.ownerId,runId:run.runId,stage:'media',failureKind:captured.error.kind});
+        return content.savePageImageWarnings({ownerId:run.ownerId,runId:run.runId,pageUrl:run.canonicalSourceIdentity,warnings:[`Image warning: ${captured.error.kind}. Text retained.`]});
+      }
       /** @type {string[]} */const warnings=[];
       /** @type {import('./url-capture-association.js').ImageScores[]} */const scores=[];
       const decision=createJevDecisionModel({...(dependencies.gradingModel===undefined?{}:{chat:{endpoint:dependencies.endpoint,model:dependencies.gradingModel,apiStyle:dependencies.apiStyle??"openrouter"}}),apiKey:dependencies.apiKey,configuration:{...JEV_GRADER_CONFIGURATION,acceptanceThreshold:0.8},fetch:dependencies.fetch,timeoutMs:10_000,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})});
@@ -1443,8 +1448,8 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           dependencies.logger({event:'knowledge-workflow-technical-retry',ownerId:run.ownerId,runId:run.runId,stage:'media',failureKind:result.error.kind});
         }
       }
-      for(const [index,image] of captured.value.images.entries()){
-        const saved=await progress.save({ownerId:run.ownerId,runId:run.runId,stage:`Captioning source images (${index+1} of ${captured.value.images.length})`,updatedAt:dependencies.now()});if(!saved.ok)return saved;
+      for(const [index,image] of captured.value.entries()){
+        const saved=await progress.save({ownerId:run.ownerId,runId:run.runId,stage:`Captioning source images (${index+1} of ${captured.value.length})`,updatedAt:dependencies.now()});if(!saved.ok)return saved;
         const caption=await retry(async attempt=>{
           const config=dependencies.configSnapshots['rights-assessor'],baseProtocol=dependencies.modelProtocols?.['rights-assessor'];
           const command={role:/** @type {const} */('source-assessor'),reasoningEffort:/** @type {const} */('low'),systemPrompt:capturedImageCaptionPrompt,input:{operation:'caption-captured-image',imageId:image.path,sourceCaption:image.caption,alt:image.alt,context:image.context},maxOutputTokens:2048,attachments:[{id:image.path,mediaType:/** @type {'image/png'|'image/jpeg'|'image/webp'|'image/gif'} */(image.mediaType),bytes:image.bytes}],responseSchema:capturedImageCaptionSchema};
@@ -1465,7 +1470,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       for(const point of points){
         const selected=associations.get(point.id);if(!selected)continue;
         const {image}=selected;
-        // Captured figures illustrate independently verified PDF text; they do not supply factual grounding.
+        // Embedded figures illustrate independently verified source text; they do not supply factual grounding.
         const binding={kind:/** @type {const} */('webpage-support'),purpose:/** @type {const} */('illustration'),ownerId:run.ownerId,runId:run.runId,sourceRevision:run.sourceRevision,imageId:image.path,originalDigest:await imageHash(image.bytes),evidence:selected.caption.description,factHash:await imageHash(new TextEncoder().encode(JSON.stringify({summary:point.summary,normalizedHash:point.normalizedHash,evidenceAnchors:point.evidenceAnchors})))};
         if(!dependencies.media?.ingestBytes){warnings.push('Image warning: MediaBytesUnavailable. Text retained.');continue;}
         const ingestBytes=dependencies.media.ingestBytes;
@@ -1475,7 +1480,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           if(existing&&!existing.ok)return existing;
           if(existing?.ok&&existing.value?.id===image.path&&await imageHash(existing.value.bytes)===binding.originalDigest)return {ok:true,value:null};
           return retry(async()=>{
-            const result=await ingestBytes({ownerId:run.ownerId,runId:run.runId,knowledgeId:point.id,sourceUrl:image.url,candidate:{url:image.url,kind:'image',educationallyConnected:true,mediaTypeHint:image.mediaType,rights:{storage:'allowed',display:'allowed',transformation:'allowed',attribution:`${material.sourceUrl}${image.caption?' — '+image.caption:''}`,originEvidence:`user-authorized-webpage-image; licence-unverified:${image.path}`}},bytes:image.bytes,binding});
+            const result=await ingestBytes({ownerId:run.ownerId,runId:run.runId,knowledgeId:point.id,sourceUrl:image.url,candidate:{url:image.url,kind:'image',educationallyConnected:true,mediaTypeHint:image.mediaType,rights:{storage:'allowed',display:'allowed',transformation:'allowed',attribution:`${material.sourceUrl}${image.caption?' — '+image.caption:''}`,originEvidence:`${material.mediaType===URL_CAPTURE_TYPE?'user-authorized-webpage-image; licence-unverified':'user-authorized-upload'}:${image.path}`}},bytes:image.bytes,binding});
             return result.ok?{ok:true,value:null}:result;
           });
         },{resumeSafe:true});

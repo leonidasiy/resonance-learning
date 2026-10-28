@@ -338,9 +338,7 @@ export function createUploadPage(dependencies) {
           ? ".txt,.md,.pptx"
           : input === "pdf"
           ? ".pdf"
-          : ".png,.jpg,.jpeg,.webp,.gif", files.length ? "" : " required", shellMarkup(4, files.length ? "" : " hidden", files.map((file) => escape(/** @type {File} */ (file).name)).join(
-              ", ",
-            )));
+          : ".png,.jpg,.jpeg,.webp,.gif", files.length ? "" : " required");
     const reason = context?.reason ?? prefillReason;
     return shellMarkup(5, (!files.length && !String(draft.get("content") ?? draft.get("url") ?? "").trim() ? emptyArt("upload") : "") + (reason ? shellMarkup(6, escape(reason)) : "") + (prefillUrl && input === "text" ? shellMarkup(59, escape(prefillUrl)) : ""), escape(context?.source.id ?? ""), busy, escape(title), context !== null || input === "text" || input === "link" ? " required" : "", ["text", "documents", "pdf", "images", "link"].map((value, index) =>
         shellMarkup(24 + index, input === value ? " selected" : "")

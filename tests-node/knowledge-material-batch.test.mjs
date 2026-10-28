@@ -1,4 +1,5 @@
 import {knowledgeUsefulnessInstruction} from '../src/features/knowledge-workflows/knowledge-usefulness.js';
+import {embeddedPdf,officeArchive} from '../tests/fixtures/embedded-documents.js';
 import {syntheticAssessment,syntheticReviewAudit} from './fixtures/knowledge-review-audit.mjs';
 import { WEBPAGE_IMAGE_POLICY } from '../worker/webpage-image-budget.js';
 import assert from "node:assert/strict";
@@ -12,13 +13,13 @@ import { createAgentConfigurationLoader } from "../src/features/knowledge-workfl
 import { D1QuizRepository, D1KnowledgeContentRepository } from "../worker/knowledge-workflow-content-d1.js";
 import { D1KnowledgeWorkflowRepository } from "../worker/knowledge-workflow-d1.js";
 import { D1KnowledgeWorkflowMaterialRepository } from "../worker/knowledge-workflow-material-d1.js";
-import { parseAuthorizedMaterial } from "../src/features/knowledge-workflows/material.js";
+import { parseAuthorizedMaterial, extractMaterialImages } from "../src/features/knowledge-workflows/material.js";
 import { packUrlCapture, URL_CAPTURE_TYPE } from "../src/features/knowledge-workflows/url-capture.js";
 import { packImageBundle, BUNDLE_TYPE } from "../src/features/knowledge-workflows/image-upload.js";
 import { createRenderer } from "../acquisition/renderer.ts";
 import { ACQUISITION_POLICY } from "../worker/acquisition-policy.js";
 
-test("production upload runtime resumes text batches and processes selected PDF page images with observation, extraction and source review", async () => {
+test("production upload runtime resumes text batches and processes selected PDF page images with observation, extraction and source review", async (t) => {
   const db = new DatabaseSync(":memory:");
   try {
     const migrations = new URL("../worker/migrations/", import.meta.url);
@@ -56,7 +57,8 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const configs = {};
     for (const role of ["rights-assessor", "knowledge-scraper", "question-generator", "question-evaluator"]) configs[role] = unwrap(await loader.load({ source: (await readFile(new URL(`../agent-config/${role}.yaml`, import.meta.url), "utf8")).replace(/name: [^\n]+/, `name: synthetic/${role}`), expectedRole: role }));
     const sections = Array.from({ length: 7 }, (_, index) => ({ id: `page-${index + 1}`, title: `Page ${index + 1}`, locator: `page:${index + 1}`, text: index === 1 ? "" : `Synthetic source relationship ${index + 1}.` }));
-    const material = { ownerId, runId, sourceId, sourceRevision: 1, sourceUrl, mediaType: "application/pdf", fileName: "synthetic.pdf", contentDigest: "sha256:synthetic", sections, media: [], provenance: { kind: "authorized-user-material", attestationReference: "synthetic-test", basis: "test-owned", processingAllowed: true } };
+    const textOnlyPdf=embeddedPdf(false,false,sections.map(s=>s.text));
+    const material = { ownerId, runId, sourceId, sourceRevision: 1, sourceUrl, mode: "text", mediaType: "application/pdf", fileName: "synthetic.pdf", contentDigest: createHash("sha256").update(textOnlyPdf).digest("hex"), sections, media: [], provenance: { kind: "authorized-user-material", attestationReference: "synthetic-test", basis: "test-owned", processingAllowed: true } };
     let run = unwrap(await service.createRun({ ownerId, sourceId, sourceRevision: 1, canonicalSourceIdentity: sourceUrl, contentSignature: material.contentDigest, idempotencyKey: runId, sourceOrigin: "private-document", configDigests: Object.fromEntries(Object.entries(configs).map(([role, config]) => [role, config.digest])) })).run;
     unwrap(await materials.persist({ ownerId, runId, materialId: "batch-material", idempotencyKey: runId, fingerprint: material.contentDigest, objectKey: "synthetic-only", material, createdAt: clock() }));
     run = unwrap(await service.attachMaterial({ ownerId, runId, materialId: "batch-material" }));
@@ -67,18 +69,18 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const materialReviews = [];
     const qualityReviews = [];
     let activeParallelReviews=0,maximumParallelReviews=0,parallelSelections=0;
-    let captionCalls=0, decisionCalls=0, decisionRefused=false;
+    let captionCalls=0, decisionCalls=0, decisionRefused=false, associationRunId="capture-run";
     let activeDrafts=0,maximumDrafts=0,reviewOverlappedDraft=false;
     let allowQuizRecovery=false,failedQuizReviews=0,recoveredDrafts=0;
     let modelCalls = 0; let invalidPairedDraftInjected = false, pairedFeedbackSeen = false;
     const transport = async (_url, init) => {
-      assert(++modelCalls < 180, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
+      assert(++modelCalls < 300, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
       const body = JSON.parse(init.body);
       if(String(_url).endsWith('/alpha/decisions')){
-        decisionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id='capture-run'").get().n,2,'Association waits for all text points');
+        decisionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id=?").get(associationRunId).n,2,'Association waits for all text points');
         assert.deepEqual(Object.keys(body.state.knowledge),['point_0','point_1']);assert.equal(body.model,'~typesafe/jev-latest');
         if(!decisionRefused){decisionRefused=true;return new Response('',{status:429});}
-        const scores=body.state.image.description.includes('image:2')?[0.95,0.79]:[0.85,0.1];
+        const scores=/image:2|image2/.test(body.state.image.description)?[0.95,0.79]:[0.85,0.1];
         return Response.json({model:'typesafe/jev-1.13',answers:{point_0:{type:'noul',noul:scores[0]},point_1:{type:'noul',noul:scores[1]}}});
       }
       const message = body.messages[1].content;
@@ -89,7 +91,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       assert.equal(body.model,config.model.name);
       assert.deepEqual(body.reasoning, { effort: task.source && task.points || body.response_format?.json_schema?.name==='captured_image_caption_v1' ? "low" : config.model.reasoningEffort });
       if(body.response_format?.json_schema?.name==='quiz_evaluation_v3'){
-        if(task.knowledge.sourceId==='capture-source'&&task.knowledge.mediaCandidates.length){assert.equal(task.imagePurpose,'illustration');assert.match(body.messages[0].content,/Missing depiction alone is not an unpictured knowledge fault/);}
+        if(task.knowledge.sourceId?.startsWith('capture-source')&&task.knowledge.mediaCandidates.length){assert.equal(task.imagePurpose,'illustration');assert.match(body.messages[0].content,/Missing depiction alone is not an unpictured knowledge fault/);}
         assert.equal(body.max_tokens,2048);assert.equal(modelInput.contract.role,'question-evaluator');
         assert.match(body.messages[0].content,/paired-question-evaluator-v13/);
         assert.match(body.messages[0].content,/A faithful narrower relationship need not restore an unrelated or nonessential removed qualifier/);
@@ -108,7 +110,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       if (['extract-webpage-facts','normalize-webpage-claim-boundaries','audit-material-image-coverage','review-material-source'].includes(task.operation) || ['knowledge_batch_selection_v1','knowledge_quality_review_v11'].includes(body.response_format?.json_schema?.name) || (task.sections && task.operation !== 'observe-material-image' && task.operation !== 'plan-authorized-material' && task.operation !== 'replan-authorized-material')) assert(body.messages[0].content.includes(knowledgeUsefulnessInstruction), 'All production selection calls receive the shared usefulness policy');
       let output;
       if(body.response_format?.json_schema?.name==='captured_image_caption_v1'){
-        captionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id='capture-run'").get().n,2);assert(!task.knowledge,'Caption has no knowledge to force-fit');assert.equal(message[2].type,'image_url');output={description:`Fixture original ${task.imageId}`,visibleText:'Q K V'};if(captionCalls===1)output.extra='invalid';
+        captionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id=?").get(associationRunId).n,2);assert(!task.knowledge,'Caption has no knowledge to force-fit');assert.equal(message[2].type,'image_url');output={description:`Fixture original ${task.imageId}`,visibleText:'Q K V'};if(captionCalls===1)output.extra='invalid';
       } else if(body.response_format?.json_schema?.name==='webpage_image_purpose_v1')output={purpose:'illustration',imageId:task.imageId,imageDigest:task.imageDigest,visibleEvidence:'Synthetic original figure context.'};
       else if (body.response_format?.json_schema?.name==='knowledge_batch_selection_v1') {
         assert.equal(modelInput.contract.role,'question-evaluator');
@@ -208,7 +210,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const extractionClock=run.extractionDeadlineAt;
     for (let step = 0; step < 16 && run.state !== "completed"; step++) {
       if (run.state === "awaiting-time-limit-decision") run = unwrap(await service.advance({ ownerId, runId, expectedRevision: run.revision, nextState: "extraction-loop" }));
-      const runtime = createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY, database, fetch: transport, browser: { readPage: forbidden, readRobots: forbidden, screenshot: forbidden, close: async () => ({ ok: true, value: null }) }, apiKey: "offline-fixture", endpoint: "https://example.test/model", now: clock, nowMs: Date.now, logger, configSnapshots: configs, imageSearch: { search: async () => assert.fail("Do not search for decorative images.") }, fallbackManifest: { entries: [], resolve: () => assert.fail("Do not attach a fallback to a text point.") }, material: materials, transition: ({ run: current, nextState, ...rest }) => service.advance({ ownerId, runId, expectedRevision: current.revision, nextState, ...rest }) });
+      const runtime = createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY, database, fetch: transport, browser: { readPage: forbidden, readRobots: forbidden, screenshot: forbidden, close: async () => ({ ok: true, value: null }) }, apiKey: "offline-fixture", endpoint: "https://example.test/model", now: clock, nowMs: Date.now, logger, configSnapshots: configs, imageSearch: { search: async () => assert.fail("Do not search for decorative images.") }, fallbackManifest: { entries: [], resolve: () => assert.fail("Do not attach a fallback to a text point.") }, material: materials, materialContent:{read:async()=>({ok:true,value:textOnlyPdf})}, transition: ({ run: current, nextState, ...rest }) => service.advance({ ownerId, runId, expectedRevision: current.revision, nextState, ...rest }) });
       const beforeQuiz=db.prepare("SELECT COUNT(*) count FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'quiz-point-completed:%' AND status='completed'").get(runId).count;
       if (step === 0) {
         const callsBefore = modelCalls;
@@ -343,26 +345,44 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const discardedResult=unwrap(await reviewRuntime.execute(unwrap(await imageService.status({ownerId,runId:imageRunId}))));
     assert.equal(discardedResult.state,'completed');assert.equal(discardedResult.restrictedUntil,restrictedUntil);assert(discardedResult.restrictedKnowledgeIds.includes(knowledgeId));assert.equal(modelCalls,beforeReplay);
 
+    await t.test('captured web, PDF and PowerPoint originals share captioning, scoring, retries and attachment', async () => {
     // Synthetic runtime material; actual Chromium PDF parsing is covered separately.
-    const captureRunId='capture-run',captureSourceId='capture-source',captureUrl='https://publisher.example/article';
-    const captureBytes=unwrap(packUrlCapture({sourceUrl:captureUrl,responseUrl:captureUrl,pdf:new TextEncoder().encode('%PDF-fixture'),images:[1,2].map(n=>({path:`image:${n}`,url:`https://cdn.example.org/figure-${n}.png`,caption:`Source caption ${n}`,alt:'Source diagram',context:'Original article context',mediaType:'image/png',bytes:png}))}));
-    const captureMaterial={...material,runId:captureRunId,sourceId:captureSourceId,sourceUrl:captureUrl,mode:'text',mediaType:URL_CAPTURE_TYPE,fileName:'article.pkpc',contentDigest:createHash('sha256').update(captureBytes).digest('hex'),sections:sections.filter(s=>s.text).slice(0,2),media:[]};
+    for(const format of ['capture','pdf','pptx']) {
+    captionCalls=0;decisionCalls=0;decisionRefused=false;
+    const captureRunId=`capture-run-${format}`,captureSourceId=`capture-source-${format}`,captureUrl=`https://publisher.example/article-${format}`;
+    associationRunId=captureRunId;
+    let captureBytes=unwrap(packUrlCapture({sourceUrl:captureUrl,responseUrl:captureUrl,pdf:new TextEncoder().encode('%PDF-fixture'),images:[1,2].map(n=>({path:`image:${n}`,url:`https://cdn.example.org/figure-${n}.png`,caption:`Source caption ${n}`,alt:'Source diagram',context:'Original article context',mediaType:'image/png',bytes:png}))}));
+    let captureMaterial={...material,runId:captureRunId,sourceId:captureSourceId,sourceUrl:captureUrl,mode:'text',mediaType:URL_CAPTURE_TYPE,fileName:'article.pkpc',contentDigest:createHash('sha256').update(captureBytes).digest('hex'),sections:sections.filter(s=>s.text).slice(0,2),media:[]};
+    if(format!=='capture'){
+      captureBytes=format==='pdf'?embeddedPdf():officeArchive([
+        {name:'ppt/slides/slide1.xml',bytes:new TextEncoder().encode('<p:sld><a:t>Synthetic source relationship 1.</a:t></p:sld>')},
+        {name:'ppt/slides/slide2.xml',bytes:new TextEncoder().encode('<p:sld><a:t>Synthetic source relationship 2.</a:t></p:sld>')},
+        {name:'ppt/media/image1.png',bytes:png},{name:'ppt/media/image2.png',bytes:png}]);
+      captureMaterial=unwrap(await parseAuthorizedMaterial({...captureMaterial,bytes:captureBytes,idempotencyKey:captureRunId,mediaType:format==='pdf'?'application/pdf':'application/vnd.openxmlformats-officedocument.presentationml.presentation',fileName:`fixture.${format}`},{digest:async bytes=>createHash('sha256').update(bytes).digest('hex'),maximumBytes:104857600,maximumCharacters:1000000}));
+    }
+    const originals=unwrap(await extractMaterialImages(captureMaterial,captureBytes)),winner=originals[1];
+
     const captureService=createKnowledgeWorkflowService(repository,{now:clock,createId:()=>captureRunId,logger});
-    let captureRun=unwrap(await captureService.createRun({ownerId,sourceId:captureSourceId,sourceRevision:1,canonicalSourceIdentity:captureUrl,contentSignature:captureMaterial.contentDigest,idempotencyKey:captureRunId,sourceOrigin:'url-material',configDigests:Object.fromEntries(Object.entries(configs).map(([role,config])=>[role,config.digest]))})).run;
-    unwrap(await materials.persist({ownerId,runId:captureRunId,materialId:'capture-material',idempotencyKey:captureRunId,fingerprint:captureMaterial.contentDigest,objectKey:'synthetic-capture',material:captureMaterial,createdAt:clock()}));
-    captureRun=unwrap(await captureService.attachMaterial({ownerId,runId:captureRunId,materialId:'capture-material'}));
-    db.prepare("INSERT INTO library_sources (owner_id,source_id,submitted_url,canonical_url,title,description,adapter_json,identity_evidence_json,state,approved_at,updated_at,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(ownerId,captureSourceId,captureUrl,captureUrl,'Captured URL','Offline captured assets fixture',JSON.stringify({kind:'web'}),'[]','active',clock(),clock(),1);
+    let captureRun=unwrap(await captureService.createRun({ownerId,sourceId:captureSourceId,sourceRevision:1,canonicalSourceIdentity:captureUrl,contentSignature:captureMaterial.contentDigest,idempotencyKey:captureRunId,sourceOrigin:format==='capture'?'url-material':'private-document',configDigests:Object.fromEntries(Object.entries(configs).map(([role,config])=>[role,config.digest]))})).run;
+    unwrap(await materials.persist({ownerId,runId:captureRunId,materialId:`capture-material-${format}`,idempotencyKey:captureRunId,fingerprint:captureMaterial.contentDigest,objectKey:'synthetic-capture',material:captureMaterial,createdAt:clock()}));
+    captureRun=unwrap(await captureService.attachMaterial({ownerId,runId:captureRunId,materialId:`capture-material-${format}`}));
+    db.prepare("INSERT INTO library_sources (owner_id,source_id,submitted_url,canonical_url,title,description,adapter_json,identity_evidence_json,state,approved_at,updated_at,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(ownerId,captureSourceId,captureUrl,captureUrl,'Captured URL','Offline captured assets fixture',JSON.stringify({kind:format==='capture'?'web':'private-document'}),'[]','active',clock(),clock(),1);
     const captureOriginals=new Map();let captureIngests=0;
     for(let step=0;step<8&&captureRun.state!=='completed';step++){
       if(captureRun.state==='awaiting-time-limit-decision')captureRun=unwrap(await captureService.advance({ownerId,runId:captureRunId,expectedRevision:captureRun.revision,nextState:'extraction-loop'}));
-      const runtime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:captureBytes})},media:{ingest:forbidden,ingestBytes:async command=>{captureIngests++;if(captureIngests<=3)return {ok:false,error:{kind:'MediaDerivativeProcessingFailed'}};assert.equal(command.candidate.kind,'image');assert.equal(command.sourceUrl,'https://cdn.example.org/figure-2.png','Highest qualifying image wins');assert.equal(command.binding.kind,'webpage-support');assert.equal(command.binding.purpose,'illustration');assert.equal(command.binding.imageId,'image:2');assert.deepEqual(command.bytes,png);captureOriginals.set(command.knowledgeId,{id:'image:2',mediaType:'image/png',bytes:png,purpose:'illustration'});return {ok:true,value:null};}},reviewMedia:{readOriginal:async scope=>({ok:true,value:captureOriginals.get(scope.knowledgeId)??null})},decodeImage,transition:({run:current,nextState,...rest})=>captureService.advance({ownerId,runId:captureRunId,expectedRevision:current.revision,nextState,...rest})});
+      const runtime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:captureBytes})},media:{ingest:forbidden,ingestBytes:async command=>{captureIngests++;if(captureIngests<=3)return {ok:false,error:{kind:'MediaDerivativeProcessingFailed'}};assert.equal(command.candidate.kind,'image');assert.equal(command.sourceUrl,winner.url,'Highest qualifying image wins');assert.equal(command.binding.kind,'webpage-support');assert.equal(command.binding.purpose,'illustration');assert.equal(command.binding.imageId,winner.path);assert.deepEqual(command.bytes,winner.bytes);captureOriginals.set(command.knowledgeId,{id:winner.path,mediaType:'image/png',bytes:winner.bytes,purpose:'illustration'});return {ok:true,value:null};}},reviewMedia:{readOriginal:async scope=>({ok:true,value:captureOriginals.get(scope.knowledgeId)??null})},decodeImage,transition:({run:current,nextState,...rest})=>captureService.advance({ownerId,runId:captureRunId,expectedRevision:current.revision,nextState,...rest})});
       unwrap(await runtime.execute(captureRun));captureRun=unwrap(await repository.findById(ownerId,captureRunId));
     }
     assert.equal(captureRun.state,'completed');assert.equal(captureRun.counts.acceptedQuizzes,2);assert.equal(captureIngests,4,JSON.stringify({captionCalls,decisionCalls,warnings:db.prepare('SELECT warnings_json FROM knowledge_workflow_page_image_warnings WHERE run_id=?').all(captureRunId)}));assert.equal(captionCalls,3,'One invalid caption gets a technical retry; successful captions replay');assert.equal(decisionCalls,3,'One 429 gets a technical retry; scores replay');
     const capturePoints=db.prepare('SELECT point_json FROM extraction_knowledge_points WHERE run_id=? ORDER BY created_at,knowledge_id').all(captureRunId).map(row=>JSON.parse(row.point_json));
     assert.equal(capturePoints.filter(p=>p.mediaCandidates.length).length,1);assert.equal(capturePoints.find(p=>p.mediaCandidates.length).imageAssociation.score,0.95);assert.equal(capturePoints.find(p=>p.mediaCandidates.length).imageAssociation.model,'typesafe/jev-1.13');assert.deepEqual(capturePoints.find(p=>!p.mediaCandidates.length).mediaCandidates,[]);assert.deepEqual(capturePoints.map(p=>p.summary).sort(),captureMaterial.sections.map(s=>s.text).sort(),'Images cannot rewrite text-derived knowledge');
 
+    }
+
+    });
+
     // Exercise the actual production extraction wiring with three independent model requests.
+
     const parallelRunId='parallel-run',parallelSourceId='parallel-source',parallelUrl='https://example.test/parallel';
     const parallelMaterial={...material,runId:parallelRunId,sourceId:parallelSourceId,sourceUrl:parallelUrl,sections:[{id:'parallel-page',title:'Parallel',locator:'page:1',text:'Parallel fixture source relationships.'}]};
     const parallelService=createKnowledgeWorkflowService(repository,{now:clock,createId:()=>parallelRunId,logger});
@@ -372,7 +392,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     db.prepare("INSERT INTO library_sources (owner_id,source_id,submitted_url,canonical_url,title,description,adapter_json,identity_evidence_json,state,approved_at,updated_at,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(ownerId,parallelSourceId,parallelUrl,parallelUrl,'Parallel source','Offline concurrency fixture',JSON.stringify({kind:'private-document'}),'[]','active',clock(),clock(),1);
     for(let step=0;step<4&&parallelRun.state!=='completed';step++){
       if(parallelRun.state==='awaiting-time-limit-decision')parallelRun=unwrap(await parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:parallelRun.revision,nextState:'extraction-loop'}));
-      const runtime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,transition:({run:current,nextState,...rest})=>parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:current.revision,nextState,...rest})});
+      const runtime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:textOnlyPdf})},transition:({run:current,nextState,...rest})=>parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:current.revision,nextState,...rest})});
       unwrap(await runtime.execute(parallelRun));parallelRun=unwrap(await repository.findById(ownerId,parallelRunId));
     }
     assert.equal(parallelRun.counts.knowledgePoints,3);
@@ -385,7 +405,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const beforeRecovery=modelCalls;
     allowQuizRecovery=true;
     parallelRun=unwrap(await parallelService.control({ownerId,runId:parallelRunId,expectedRevision:parallelRun.revision,action:'retry-quizzes',idempotencyKey:'recover-quiz-fixture'}));
-    const recoveryRuntime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,transition:({run:current,nextState,...rest})=>parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:current.revision,nextState,...rest})});
+    const recoveryRuntime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:textOnlyPdf})},transition:({run:current,nextState,...rest})=>parallelService.advance({ownerId,runId:parallelRunId,expectedRevision:current.revision,nextState,...rest})});
     unwrap(await recoveryRuntime.execute(parallelRun));parallelRun=unwrap(await repository.findById(ownerId,parallelRunId));
     assert.equal(parallelRun.state,'completed');assert.equal(parallelRun.failureKind,null);
     assert.equal(parallelRun.counts.acceptedQuizzes,3);assert.equal(recoveredDrafts,1,'Recovery reuses the saved draft');

@@ -3,6 +3,7 @@
 import { getResolvedPDFJS } from "unpdf";
 import { BUNDLE_TYPE, imageSignature, parseImageBundle } from "./image-upload.js";
 import { URL_CAPTURE_TYPE, parseUrlCapture } from "./url-capture.js";
+import { extractPdfEmbeddedImages } from "./pdf-embedded-images.js";
 
 /** @template T, E @typedef {{ readonly ok: true, readonly value: T } | { readonly ok: false, readonly error: E }} Result */
 
@@ -25,6 +26,42 @@ const pptxType = "application/vnd.openxmlformats-officedocument.presentationml.p
 const MAXIMUM_PDF_PAGES = 100;
 const MAXIMUM_PDF_IMAGE_PIXELS = 16_777_216;
 const MAXIMUM_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/** Read original uploaded images for the shared caption/association workflow; never fetch document links.
+ * @param {AuthorizedMaterial} material @param {Uint8Array} bytes
+ * @returns {Promise<Result<readonly import('./url-capture.js').CapturedImage[], {kind:string}>>} */
+export async function extractMaterialImages(material, bytes) {
+  // A selected text excerpt never authorizes images elsewhere on its page or in the document.
+  if (material.sections.some(section => section.locator.startsWith("pdf:page="))) return {ok:true,value:[]};
+  if (material.mediaType === URL_CAPTURE_TYPE) {
+    const capture = parseUrlCapture(bytes);
+    if (!capture.ok) return capture;
+    return capture.value.sourceUrl === material.sourceUrl ? {ok:true,value:capture.value.images} : {ok:false,error:{kind:"WorkflowMaterialInvalid"}};
+  }
+  /** @type {readonly MaterialMedia[]} */ let media = [];
+  if (material.mediaType === pdfType) {
+    const extracted = await extractPdfEmbeddedImages(bytes);
+    if (!extracted.ok) return extracted;
+    media = extracted.value;
+  } else if (material.mediaType === pptxType) {
+    const archive = await readZip(bytes, 200 * 1024 * 1024);
+    if (!archive.ok) return archive;
+    media = [...archive.value].flatMap(([path, bytes]) => {
+      const mediaType = mediaTypeForPath(path);
+      return path.startsWith("ppt/media/") && mediaType !== null && imageTypes.has(mediaType) ? [{path,bytes,mediaType,context:"Embedded PowerPoint image."}] : [];
+    });
+  }
+  const images = [];
+  let totalBytes = 0;
+  for (const image of media) {
+    totalBytes += image.bytes.length;
+    if (image.bytes.length > MAXIMUM_IMAGE_BYTES || totalBytes > 100 * 1024 * 1024) return {ok:false,error:{kind:"MaterialByteLimitExceeded"}};
+    if (imageSignature(image.bytes) !== image.mediaType) return {ok:false,error:{kind:"MaterialImageInvalid"}};
+    const url = new URL(material.sourceUrl); url.hash = image.path;
+    images.push({...image,url:url.href,caption:image.caption ?? "",alt:image.alt ?? "",context:image.context ?? ""});
+  }
+  return {ok:true,value:images};
+}
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function record(value) { return typeof value === "object" && value !== null && !Array.isArray(value); }
