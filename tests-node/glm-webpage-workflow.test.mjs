@@ -122,7 +122,7 @@ for(const {partial,blockedImage,resumedPage,sessionImage,cacheResume,authoritati
     if(run.state==='awaiting-time-limit-decision'){
      if(execution===0){assert(run.counts.knowledgePoints>0,'The first reviewed chunk publishes before the rest of the page');assert(textCritics<candidateCount,'Later drafts remain unreviewed after the first publication');assert(run.counts.acceptedQuizzes>0,'Quizzes are usable before page review completes');}
      run=unwrap(await service.advance({ownerId,runId,expectedRevision:run.revision,nextState:'extraction-loop'}));
-    }else assert.equal(run.state,'per-point-quiz-loop');
+    }else assert(['extraction-loop','per-point-quiz-loop'].includes(run.state),`Unexpected continuation state: ${run.state}`);
    }
    assert.equal(run.state,'completed');assert.equal(run.counts.knowledgePoints,selectedCount);assert.equal(run.counts.acceptedQuizzes,selectedCount);
    assert.equal(JSON.parse(db.prepare('SELECT scratchpad_json FROM extraction_scratchpads').get().scratchpad_json).reviewedCandidateCount,candidateCount);

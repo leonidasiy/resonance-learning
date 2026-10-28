@@ -18,6 +18,44 @@ function rights() {
   return /** @type {import("../src/features/knowledge-workflows/rights.js").RightsDecision} */ ({ ownerId: "owner-a", sourceId: "source-a", sourceRevision: 1, canonicalUrl: "https://example.test/learn", status: "allowed", evidence: [], reason: null, assessedAt: "2026-08-13T00:00:00.000Z", expiresAt: null });
 }
 
+Deno.test("resumed extraction checkpoints quiz work before replaying the source, including the last quiz chunk",async()=>{
+  for(const hasMore of [true,false]){
+    let extractions=0;
+    const current={...run("extraction-loop"),counts:{pages:0,knowledgePoints:1,acceptedQuizzes:0,pendingQuizzes:0}};
+    const point={id:"knowledge-a",sourceId:"source-a",sourceRevision:1,summary:"A supported relationship.",normalizedHash:"hash-a",evidenceAnchors:[{url:"https://example.test/learn",selector:"#a"}],coverageGoalIds:[],mediaCandidates:[],attribution:{sourceUrl:"https://example.test/learn"},extractionVersion:"v1"};
+    const executor=createKnowledgeWorkflowExecutor({
+      transition:async({run,nextState,counts})=>({ok:true,value:{...run,state:nextState,counts:counts??run.counts,revision:run.revision+1}}),
+      robots:{check:async()=>({ok:true,value:{}})},
+      extraction:{run:async()=>{extractions++;return {ok:true,value:{state:"completed",scratchpad:{},knowledgePointCount:1,pagesProcessed:1}};}},
+      knowledge:{list:async()=>({ok:true,value:[point]})},
+      classification:{ensure:async()=>({ok:true,value:null})},
+      quiz:{run:async()=>({ok:true,value:{processedPoints:1,hasMore,dispositions:[{knowledgeId:point.id,status:"accepted",publicationStatus:"published",attempts:1,failureKind:null,restrictedUntil:null}]}})},
+      logger:()=>{},
+    });
+    const result=await executor.run({run:current,rootUrl:current.canonicalSourceIdentity,rightsAssessment:rights()});
+    assert(result.ok,"The saved quiz chunk must checkpoint successfully.");if(!result.ok)continue;
+    assertEquals(extractions,0);
+    assertEquals(result.value.state,"extraction-loop");
+    assertEquals(result.value.run.counts.pages,0);
+    assertEquals(result.value.run.counts.acceptedQuizzes,1);
+  }
+});
+
+Deno.test("an empty resumed quiz backlog still lets newly committed knowledge start quizzes",async()=>{
+  let extracting=false,quizzes=0;
+  const current={...run("extraction-loop"),counts:{pages:0,knowledgePoints:1,acceptedQuizzes:1,pendingQuizzes:0}};
+  const point={id:"knowledge-a",sourceId:"source-a",sourceRevision:1,summary:"A supported relationship.",normalizedHash:"hash-a",evidenceAnchors:[{url:"https://example.test/learn",selector:"#a"}],coverageGoalIds:[],mediaCandidates:[],attribution:{sourceUrl:"https://example.test/learn"},extractionVersion:"v1"};
+  const executor=createKnowledgeWorkflowExecutor({
+    transition:async({run,nextState,counts})=>({ok:true,value:{...run,state:nextState,counts:counts??run.counts,revision:run.revision+1}}),
+    robots:{check:async()=>({ok:true,value:{}})},
+    extraction:{run:async command=>{extracting=true;command.onKnowledge?.();return {ok:true,value:{state:"awaiting-time-limit-decision",scratchpad:{},knowledgePointCount:2,pagesProcessed:0}};}},
+    knowledge:{list:async()=>({ok:true,value:[point]})},classification:{ensure:async()=>({ok:true,value:null})},
+    quiz:{run:async()=>{quizzes++;assertEquals(extracting,quizzes===2);return {ok:true,value:{processedPoints:extracting?1:0,dispositions:[]}};}},logger:()=>{},
+  });
+  const result=await executor.run({run:current,rootUrl:current.canonicalSourceIdentity,rightsAssessment:rights()});
+  assert(result.ok,"Extraction must continue after an empty quiz backlog.");assertEquals(quizzes,2);
+});
+
 Deno.test("executor waits for rights before robots and runs extraction then quiz sequentially", async () => {
   /** @type {string[]} */ const calls = [];
   const executor = createKnowledgeWorkflowExecutor({ classification: { ensure: async () => ({ ok: true, value: null }) },

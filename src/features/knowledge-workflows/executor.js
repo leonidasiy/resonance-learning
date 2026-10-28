@@ -34,7 +34,7 @@ import { isWorkflowRobotsEvidence } from "./workflow.js";
 /** @typedef {{ readonly check: (command: { readonly rights: RightsDecision, readonly targetUrl?: string }) => Promise<Result<unknown, unknown>> }} WorkflowRobots */
 /** @typedef {{ readonly run: (command: { readonly run: KnowledgeWorkflowRun, readonly rights: RightsDecision, readonly robots: unknown, readonly onKnowledge?: () => void }) => Promise<Result<{ readonly state: "completed" | "paused" | "awaiting-time-limit-decision", readonly scratchpad: unknown, readonly knowledgePointCount: number, readonly pagesProcessed: number }, unknown>> }} WorkflowExtraction */
 /** @typedef {{ readonly reviewedEmpty?: (scope:{readonly ownerId:string,readonly runId:string,readonly sourceId:string,readonly sourceRevision:number})=>Promise<Result<boolean,unknown>>, readonly list: (scope: { readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number, readonly incremental?: boolean }) => Promise<Result<readonly KnowledgePoint[], unknown>> }} WorkflowKnowledge */
-/** @typedef {{ readonly run: (command: { readonly ownerId: string, readonly runId: string, readonly points: readonly KnowledgePoint[] }) => Promise<Result<QuizRunResult & {readonly hasMore?:boolean}, unknown>> }} WorkflowQuiz */
+/** @typedef {{ readonly run: (command: { readonly ownerId: string, readonly runId: string, readonly points: readonly KnowledgePoint[] }) => Promise<Result<QuizRunResult & {readonly hasMore?:boolean,readonly processedPoints?:number}, unknown>> }} WorkflowQuiz */
 /** @typedef {{ readonly ensure: (command: { readonly ownerId: string, readonly sourceId: string, readonly sourceRevision: number, readonly points: readonly KnowledgePoint[], readonly incremental?: boolean }) => Promise<Result<null, unknown>> }} WorkflowClassification */
 /** @typedef {{ readonly close: () => Promise<Result<null, unknown>> }} WorkflowCleanup */
 /** @typedef {{ readonly transition: (command: { readonly run: KnowledgeWorkflowRun, readonly nextState: WorkflowState, readonly counts?: { readonly pages: number, readonly knowledgePoints: number, readonly acceptedQuizzes: number, readonly pendingQuizzes: number }, readonly robotsEvidence?: WorkflowRobotsEvidence | null, readonly failureKind?: string | null }) => Promise<Result<KnowledgeWorkflowRun, unknown>>, readonly robots: WorkflowRobots, readonly extraction: WorkflowExtraction, readonly knowledge: WorkflowKnowledge, readonly classification: WorkflowClassification, readonly quiz: WorkflowQuiz, readonly cleanup?: WorkflowCleanup, readonly logger: (entry: { readonly event: string, readonly runId?: string, readonly stage?: string, readonly failureKind?: string, readonly diagnosticToken?: string }) => void }} WorkflowExecutorDependencies */
@@ -135,9 +135,9 @@ export function createKnowledgeWorkflowExecutor(dependencies) {
       }
       if (current.state === "extraction-loop" || current.state === "paused" || current.state === "awaiting-time-limit-decision") {
         if (!rightsMatch(command, current)) return fail({ stage: "rights", causeKind: "WorkflowRightsRequired" }, dependencies, current.runId);
-        /** @type {Promise<Result<QuizRunResult,WorkflowExecutorFailure>>|undefined} */ let readyQuiz;
+        /** @type {Promise<Result<QuizRunResult & {readonly processedPoints?:number},WorkflowExecutorFailure>>|undefined} */ let readyQuiz;
         const onKnowledge=()=>{
-          if(readyQuiz!==undefined)return;
+          if(readyQuiz!==undefined)return readyQuiz;
           // Start only from committed knowledge, and settle admitted work before any state transition.
           readyQuiz=(async()=>{
             const scope={ownerId:current.ownerId,runId:current.runId,sourceId:current.sourceId,sourceRevision:current.sourceRevision};
@@ -151,8 +151,20 @@ export function createKnowledgeWorkflowExecutor(dependencies) {
             if(!classification.ok)return {ok:false,error:operationFailure('classification','WorkflowSourceClassificationFailed',classification.error,'extraction-loop')};
             try{const quiz=await dependencies.quiz.run({...scope,points:points.value});return quiz.ok?quiz:{ok:false,error:operationFailure('quiz','WorkflowQuizFailed',quiz.error,'extraction-loop')};}catch(error){return {ok:false,error:operationFailure('quiz','WorkflowQuizFailed',error,'extraction-loop','QuizGenerationRejected')};}
           })();
+          return readyQuiz;
         };
-        if(current.state==='extraction-loop'&&current.counts.knowledgePoints>0)onKnowledge();
+        if(current.state==='extraction-loop'&&current.counts.knowledgePoints>0) {
+          const backlog=await onKnowledge();
+          if(!backlog.ok)return fail(backlog.error,dependencies,current.runId);
+          // Give resumed quiz work its own durable step before replaying source extraction.
+          if((backlog.value.processedPoints??0)>0) {
+            const counts={...current.counts,acceptedQuizzes:Math.max(current.counts.acceptedQuizzes,backlog.value.dispositions.filter(d=>d.status==='accepted').length),pendingQuizzes:Math.max(current.counts.pendingQuizzes,backlog.value.dispositions.filter(d=>d.publicationStatus==='pending-review').length)};
+            const changed=await transition(dependencies,{run:current,nextState:'extraction-loop',counts});
+            if(!changed.ok)return fail(operationFailure('transition','WorkflowTransitionFailed',changed.error,'extraction-loop'),dependencies,current.runId);
+            return {ok:true,value:freeze({state:changed.value.state,run:changed.value})};
+          }
+          readyQuiz=undefined;
+        }
         let extracted;
         try { extracted = await dependencies.extraction.run({ run: current, rights: command.rightsAssessment, robots: { status: "allowed" },onKnowledge }); }
         catch (error) { await readyQuiz; return fail(operationFailure("extraction", "WorkflowExtractionFailed", error, current.state, "ExtractionDependencyRejected"), dependencies, current.runId); }

@@ -1802,7 +1802,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         if (!progress.ok) return progress;
         return successfulCheckpoint(`quiz-batch-classification:${current.sourceRevision}:${progress.value.retryGeneration ?? 0}${incremental?":incremental":""}`, () => ensureSourceClassification(current, points, !incremental));
       }
-      /** @param {{ownerId:string,runId:string,points:readonly KnowledgePoint[]}} command @returns {Promise<Result<import('../src/features/knowledge-workflows/quiz.js').QuizRunResult & {hasMore:boolean},{kind:string}>>} */
+      /** @param {{ownerId:string,runId:string,points:readonly KnowledgePoint[]}} command @returns {Promise<Result<import('../src/features/knowledge-workflows/quiz.js').QuizRunResult & {hasMore:boolean,processedPoints:number},{kind:string}>>} */
       async function quizChunk(command) {
         /** @type {import('../src/features/knowledge-workflows/quiz.js').QuizDisposition[]} */ const dispositions = [];
         const completedIds = new Set(),pointIds=new Set(command.points.map(point=>point.id));
@@ -1871,7 +1871,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         },()=>!failed&&dependencies.nowMs()<admissionDeadline);
         for(const result of results){if(!result.ok)return result;dispositions.push(...result.value);}
         dependencies.logger({event:'quiz-pipeline-success',runId:current.runId,count:results.length,durationMs:Math.max(0,dependencies.nowMs()-started)});
-        return {ok:true,value:{dispositions,hasMore:pending.length>results.length}};
+        return {ok:true,value:{dispositions,hasMore:pending.length>results.length,processedPoints:results.length}};
       }
       const executor = createKnowledgeWorkflowExecutor({ transition, robots: { check: (command) => robots.check({ rights: command.rights, userAgent: "knowledge-platform" }) }, extraction: { run: async (command) => { const startedAtMs = command.run.extractionStartedAt === null ? dependencies.nowMs() : Date.parse(command.run.extractionStartedAt); const deadlineAtMs = command.run.extractionDeadlineAt === null ? startedAtMs + 30 * 60 * 1_000 : Date.parse(command.run.extractionDeadlineAt); if (!Number.isFinite(startedAtMs) || !Number.isFinite(deadlineAtMs)) return { ok: false, error: { kind: "WorkflowExtractionClockInvalid" } }; if (command.run.materialId !== null && command.run.materialId !== undefined) { const materialRunner = await authorizedMaterialExtraction(command.run, command.rights, command.onKnowledge); if (!materialRunner.ok) return materialRunner; return materialRunner.value.run({ ownerId: command.run.ownerId, runId: command.run.runId, sourceId: command.run.sourceId, sourceRevision: command.run.sourceRevision, rootUrl: command.run.canonicalSourceIdentity, startedAtMs, deadlineAtMs }); } let navigation=command.run.extractionScope === "page" ? undefined : reviewedNavigation;
         if(navigation&&!navigationWithinScope(navigation.sourceRootUrl,command.run.canonicalSourceIdentity))return {ok:false,error:{kind:"ReviewedNavigationScopeInvalid"}};
