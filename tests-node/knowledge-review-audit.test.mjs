@@ -15,7 +15,7 @@ const clause=(claimEnd,previousEvidence=[])=>({claimEnd,textEvidence:[{anchorInd
 const audit=()=>(constructedV8({version:4,clauses:[clause(6,[{priorId:'knowledge:rule',start:0,end:6}]),{...clause('END'),textEvidence:[{anchorIndex:0,start:6,end:16}]}],novelty:'new',revisionReason:'none'}));
 const withoutPixelDeclaration=a=>({...a,clauses:a.clauses.map(c=>{const {supportsWholeClaim,...old}=c;return old;}),...(Object.hasOwn(a,'finalClause')?{finalClause:a.finalClause?((({supportsWholeClaim,...old})=>old)(a.finalClause)):null}:{})});
 const historicalVerdict=(a,extra={})=>({decision:'pass',reasons:['Synthetic relationships have retained support and a new application.'],feedback:'Keep the retained source relationships.',matchedLessOftenIds:[],supportingImageEvidence:'',allowTextOnly:true,audit:a?.version<8?withoutPixelDeclaration(a):a,...extra});
-const verdict=(a=audit(),extra={})=>{const old=historicalVerdict(a,extra);if(a?.version!==8)return old;const {decision,...rest}=old;return {...rest,qualityDecision:decision,retrievalComparison:decision==='drop-see-less'?null:{question:'What relationship does this point teach?',answer:point.summary,priorAnswer:null,priorEvidence:[],reason:'Constructed comparison, no semantic accuracy claim.'},sourceReliability:decision==='drop-see-less'?null:{basis:'Constructed captured relationship basis; not a model accuracy claim.',decision:'pass',reason:'Synthetic retained reliability.'}};};
+const verdict=(a=audit(),extra={})=>{const old=historicalVerdict(a,extra);if(a?.version!==8)return old;const {decision,...rest}=old;return {...rest,sourceLanguageMatches:true,qualityDecision:decision,retrievalComparison:decision==='drop-see-less'?null:{question:'What relationship does this point teach?',answer:point.summary,priorAnswer:null,priorEvidence:[],reason:'Constructed comparison, no semantic accuracy claim.'},sourceReliability:decision==='drop-see-less'?null:{basis:'Constructed captured relationship basis; not a model accuracy claim.',decision:'pass',reason:'Synthetic retained reliability.'}};};
 async function review(value,{candidate=point,sourceMode='text',sourceEvidence={},reviewContext=context,repair}={}){
  let critics=0,repairs=0;
  const result=await createKnowledgeQualityReviewer({context:reviewContext,sourceMode,sourceEvidence,digest:async()=> 'synthetic-digest',evaluate:async()=>{critics++;return ok(value);},regenerate:async()=>{repairs++;assert(repair,'Unexpected semantic repair');return ok(repair);}}).review(candidate);
@@ -116,14 +116,14 @@ test('fresh v8 requires evidence-only finalClause; historical v2 and v3 audits r
  assert.equal(isKnowledgeReviewVerdict(historical,context),true);
  invalid((await review(historical)).result);
  const v3=verdict({version:3,clauses:[{claim:{start:0,end:16},textEvidence:[{anchorIndex:0,start:0,end:16}],pixelEvidence:[],previousEvidence:[]}],novelty:'new',revisionReason:'none'});assert.equal(isKnowledgeReviewVerdict(v3,context),true);invalid((await review(v3)).result);
- assert.equal(knowledgeReviewSchemaFor(context,knowledgeReviewAuditInput(point,context,{})).name,'knowledge_quality_review_v11');
+ assert.equal(knowledgeReviewSchemaFor(context,knowledgeReviewAuditInput(point,context,{})).name,'knowledge_quality_review_v12');
 });
 test('even empty drop-see-less audit requires fresh representation version; old v2 remains read-only compatible',async()=>{
  const reviewContext={lessOften:[{id:'hidden',summary:point.summary}],previousKnowledge:[],previousQuizzes:[]},historical=verdict({clauses:[],novelty:'new',revisionReason:'none'},{decision:'drop-see-less',matchedLessOftenIds:['hidden']});
  assert.equal(isKnowledgeReviewVerdict(historical,reviewContext),true);
  invalid((await review(historical,{reviewContext})).result);
  const v3={...historical,audit:{...historical.audit,version:3}};assert.equal(isKnowledgeReviewVerdict(v3,reviewContext),true);invalid((await review(v3,{reviewContext})).result);
- const {decision,...common}=historical;const fresh={...common,qualityDecision:decision,retrievalComparison:decision==='drop-see-less'?null:{question:'What relationship does this point teach?',answer:point.summary,priorAnswer:null,priorEvidence:[],reason:'Constructed comparison, no semantic accuracy claim.'},sourceReliability:null,audit:{version:8,clauses:[],finalClause:null}};
+ const {decision,...common}=historical;const fresh={...common,sourceLanguageMatches:true,qualityDecision:decision,retrievalComparison:decision==='drop-see-less'?null:{question:'What relationship does this point teach?',answer:point.summary,priorAnswer:null,priorEvidence:[],reason:'Constructed comparison, no semantic accuracy claim.'},sourceReliability:null,audit:{version:8,clauses:[],finalClause:null}};
  assert.deepEqual((await review(fresh,{reviewContext})).result,{ok:true,value:null});
 });
 test('no-space Unicode content has content-derived word and punctuation boundaries',async()=>{
@@ -178,7 +178,7 @@ for(const mutation of ['missing-final','null-final','array-final','missing-final
 test('zero nonfinal clauses derives one complete original claim without a model-supplied final boundary',async()=>{
  const value=verdict();value.audit.clauses=[];value.audit.finalClause.textEvidence=[{anchorIndex:0,start:0,end:16}];
  assert.deepEqual(knowledgeReviewClaimSpans(value.audit,16),[{start:0,end:16}]);assert.equal((await review(value)).result.ok,true);
- const schema=knowledgeReviewSchemaFor(context,knowledgeReviewAuditInput(point,context,{}));assert.equal(schema.name,'knowledge_quality_review_v11');
+ const schema=knowledgeReviewSchemaFor(context,knowledgeReviewAuditInput(point,context,{}));assert.equal(schema.name,'knowledge_quality_review_v12');
  assert(schema.schema.properties.audit.required.includes('finalClause'));assert.equal(schema.schema.properties.audit.properties.finalClause.anyOf.length,1,'null finalClause not offered without owner see-less IDs');assert.equal(schema.schema.properties.audit.properties.clauses.items.properties.claimEnd.maximum,14);assert.equal(Object.hasOwn(schema.schema.properties.audit.properties.finalClause.anyOf[0].properties,'claimEnd'),false);
 });
 test('v4 historical verdicts remain readable and completed without accepting them as fresh v5',async()=>{

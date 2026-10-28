@@ -11,7 +11,7 @@ const pair=assembleQuizPair(raw,'synthetic'),draft={id:pair.multipleChoice.id,kn
 async function run(issues,feedback){let generators=0,critics=0,published=0,discarded=0;const received={score:9,reasons:['Constructed judgment.'],feedback,groundingProblems:[],knowledgeGroundingProblems:issues},before=structuredClone(received),result=await createQuizActorCritic({maxAttempts:2,now:()=> '2026-10-12T00:00:00Z',logger:()=>{},generator:{generate:async()=>{generators++;return {ok:true,value:draft};}},reviewer:{evaluate:async input=>{critics++;return normalizeKnowledgeQuizEvaluation(received,input.knowledge);}},repository:{findPublished:async()=>({ok:true,value:null}),appendAttempt:async()=>({ok:true,value:null}),publish:async()=>{published++;return {ok:true,value:null};},discard:async()=>{discarded++;return {ok:true,value:null};},purge:async()=>assert.fail('No purge')}}).run({ownerId:'owner',runId:'run',points:[point]});assert.deepEqual(received,before);assert(result.ok);return {result,generators,critics,published,discarded};}
 
 test('omission guidance requires captured restriction and truth impact, preserving other point faults',()=>{
- assert.match(questionEvaluatorPrompt,/paired-question-evaluator-v13/);
+ assert.match(questionEvaluatorPrompt,/paired-question-evaluator-v14-source-language/);
  assert.equal(questionEvaluationSchema.name,'quiz_evaluation_v3');
  assert.match(questionEvaluatorPrompt,/identify the captured wording that restricts the claim/);
  assert.match(questionEvaluatorPrompt,/makes that exact current claim false or broader than the captured evidence supports/);

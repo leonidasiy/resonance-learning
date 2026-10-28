@@ -112,12 +112,12 @@ test("fresh schema retains the full required pair without count-only composition
   assert.deepEqual(schema.schema.properties.fillBlank.properties.blanks.items.required, ["id", "canonicalAnswer", "acceptedAnswers"]);
 });
 test("fresh prompt describes final pair rebuilding and substantive source conflict rather than cosmetic order", () => {
-  assert.match(questionGeneratorPrompt, /paired-question-generator-v9/);
+  assert.match(questionGeneratorPrompt, /paired-question-generator-v10-source-language/);
   assert.match(
     questionGeneratorPrompt,
     /rebuild all four arrays and the blank prompt together/,
   );
-  assert.match(questionEvaluatorPrompt, /paired-question-evaluator-v13/);
+  assert.match(questionEvaluatorPrompt, /paired-question-evaluator-v14-source-language/);
   assert.match(
     questionEvaluatorPrompt,
     /source-conflicting requires a substantive opposing meaning/,

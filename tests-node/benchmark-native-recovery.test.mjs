@@ -59,7 +59,7 @@ async function fixture(t,quizAssessmentMode="valid"){
    if(quizAssessmentMode==='legacy-negative')value.knowledgeGroundingProblems=['A legacy string is not a fresh claim-bound issue.'];
    if(quizAssessmentMode==='necessary-condition')value.knowledgeGroundingProblems=[{claim:task.knowledge.summary,kind:'source-conflicting',reason:'The supplied source requires a condition absent from this unconditional retained claim.'}];
    if(quizAssessmentMode==='draft-only'&&task.attempt===1)value.groundingProblems=['This quiz draft introduces an unsupported condition.'];
-  }else {assert.equal(schema,'knowledge_quality_review_v11');value=syntheticAssessment(task,value);}
+  }else {assert.equal(schema,'knowledge_quality_review_v12');value=syntheticAssessment(task,value);}
   return Response.json({id:'synthetic-response-'+calls.length,model:body.model,choices:[{finish_reason:'stop',message:{content:JSON.stringify(value)}}],usage:{prompt_tokens:1,completion_tokens:1,cost:0}});
  },now:Date.now,signal:new AbortController().signal,logger:()=>{},billingMode:'estimated',ownerDecision:decision}};
  try{
@@ -89,7 +89,7 @@ test('actual adapter closed-store exact quiz call recovery preserves completed e
  const f=await fixture(t);try{
   const app=await f.reopen();const resumed=await app.extract({...f.extractCommand,generate:forbidden});assert.equal(resumed.ok,true,JSON.stringify(resumed.error));
   const result=await app.quiz(f.item);assert.equal(result.ok,true,JSON.stringify(result.error));assert.equal(result.value.outputs.length,1);assert.equal(result.value.outputs[0].attempt,1);
-  assert.deepEqual(f.calls.map(call=>call.schema),['knowledge_quality_review_v11','paired_quiz_v3','quiz_evaluation_v3','quiz_evaluation_v3']);
+  assert.deepEqual(f.calls.map(call=>call.schema),['knowledge_quality_review_v12','paired_quiz_v3','quiz_evaluation_v3','quiz_evaluation_v3']);
   assert.deepEqual(f.calls[2].body,f.calls[3].body,'dynamic harness reconstruction must retain the exact native body');
   const last=[...f.port.rows.values()].at(-1);assert.equal(last.baseKey,f.reservation.key);assert.equal(f.reservation.response,null);assert(last.response);assert.equal(f.port.rows.size,4);
   assert.equal(f.storage.sqlite.prepare('SELECT status FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key=?').get(f.row.owner_id,f.row.run_id,f.row.stage_key).status,'completed');
@@ -200,7 +200,7 @@ test('actual native fresh necessary-condition negative remains binding at high q
 test('actual native fresh draft-only fault remains repairable within its second draft and critic',async t=>{
  const f=await fixture(t,'draft-only');try{
   const app=await f.reopen();const result=await app.quiz(f.item);assert(result.ok,JSON.stringify(result.error));assert.equal(result.value.outputs.length,1);assert.equal(result.value.outputs[0].attempt,2);assert.equal(f.calls.length,6);
-  assert.deepEqual(f.calls.map(x=>x.schema),['knowledge_quality_review_v11','paired_quiz_v3','quiz_evaluation_v3','quiz_evaluation_v3','paired_quiz_v3','quiz_evaluation_v3']);assert.equal(f.calls.at(-1).body.max_tokens,2048);
+  assert.deepEqual(f.calls.map(x=>x.schema),['knowledge_quality_review_v12','paired_quiz_v3','quiz_evaluation_v3','quiz_evaluation_v3','paired_quiz_v3','quiz_evaluation_v3']);assert.equal(f.calls.at(-1).body.max_tokens,2048);
   assert.equal(f.storage.sqlite.prepare('SELECT count(*) AS n FROM extraction_knowledge_points').get().n,1);assert.equal(f.storage.sqlite.prepare('SELECT count(*) AS n FROM knowledge_workflow_quizzes').get().n,1);
   const again=await app.quiz(f.item);assert(again.ok);assert.equal(again.value.outputs[0].attempt,2);assert.equal(f.calls.length,6,'Same-owner publication read does not re-evaluate or regenerate.');
  }finally{await f.cleanup();}

@@ -93,7 +93,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       if(body.response_format?.json_schema?.name==='quiz_evaluation_v3'){
         if(task.knowledge.sourceId?.startsWith('capture-source')&&task.knowledge.mediaCandidates.length){assert.equal(task.imagePurpose,'illustration');assert.match(body.messages[0].content,/Missing depiction alone is not an unpictured knowledge fault/);}
         assert.equal(body.max_tokens,2048);assert.equal(modelInput.contract.role,'question-evaluator');
-        assert.match(body.messages[0].content,/paired-question-evaluator-v13/);
+        assert.match(body.messages[0].content,/paired-question-evaluator-v14-source-language/);
         assert.match(body.messages[0].content,/A faithful narrower relationship need not restore an unrelated or nonessential removed qualifier/);
         assert.match(body.messages[0].content,/Conditions, negations, units and causal qualifications necessary to preserve that relationship remain required/);
         assert.match(body.messages[0].content,/entire retained knowledge.summary/);
@@ -107,7 +107,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
         assert.match(body.response_format.json_schema.schema.properties.fillBlank.properties.blanks.items.properties.acceptedAnswers.description,/exact canonical answer alone is sufficient/);
         assert.match(body.response_format.json_schema.schema.properties.fillBlank.properties.blanks.items.properties.acceptedAnswers.description,/unique after Unicode NFKC/);
       }
-      if (['extract-webpage-facts','normalize-webpage-claim-boundaries','audit-material-image-coverage','review-material-source'].includes(task.operation) || ['knowledge_batch_selection_v1','knowledge_quality_review_v11'].includes(body.response_format?.json_schema?.name) || (task.sections && task.operation !== 'observe-material-image' && task.operation !== 'plan-authorized-material' && task.operation !== 'replan-authorized-material')) assert(body.messages[0].content.includes(knowledgeUsefulnessInstruction), 'All production selection calls receive the shared usefulness policy');
+      if (['extract-webpage-facts','normalize-webpage-claim-boundaries','audit-material-image-coverage','review-material-source'].includes(task.operation) || ['knowledge_batch_selection_v1','knowledge_quality_review_v12'].includes(body.response_format?.json_schema?.name) || (task.sections && task.operation !== 'observe-material-image' && task.operation !== 'plan-authorized-material' && task.operation !== 'replan-authorized-material')) assert(body.messages[0].content.includes(knowledgeUsefulnessInstruction), 'All production selection calls receive the shared usefulness policy');
       let output;
       if(body.response_format?.json_schema?.name==='captured_image_caption_v1'){
         captionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id=?").get(associationRunId).n,2);assert(!task.knowledge,'Caption has no knowledge to force-fit');assert.equal(message[2].type,'image_url');output={description:`Fixture original ${task.imageId}`,visibleText:'Q K V'};if(captionCalls===1)output.extra='invalid';
@@ -118,7 +118,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
         if(task.points.some(point=>point.summary.startsWith('Parallel fixture'))){parallelSelections++;assert.equal(activeParallelReviews,0);assert.equal(task.points.length,3);}
         output={keptKnowledgeIds:task.points.map(point=>point.id)};
       }
-      else if (body.response_format?.json_schema?.name==='knowledge_quality_review_v11') {
+      else if (body.response_format?.json_schema?.name==='knowledge_quality_review_v12') {
         if(task.knowledge.summary.startsWith('Parallel fixture')){activeParallelReviews++;maximumParallelReviews=Math.max(maximumParallelReviews,activeParallelReviews);await new Promise(resolve=>setTimeout(resolve,10));activeParallelReviews--;}
         qualityReviews.push(task.sourceMode);
         assert.equal(modelInput.contract.role,'question-evaluator');

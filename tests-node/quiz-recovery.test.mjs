@@ -383,7 +383,7 @@ test("paired quiz canonical-only answers are valid; optional synonyms cannot be 
     assert.equal(isQuizPairDraft(duplicate), false);
     assert.throws(() => assembleQuizPair(duplicate, "quiz:synthetic"), /invalid/);
   }
-  assert.match(questionGeneratorPrompt, /paired-question-generator-v9/);
+  assert.match(questionGeneratorPrompt, /paired-question-generator-v10-source-language/);
   for (const guidance of [questionGeneratorPrompt, quizPairSchema(true).schema.properties.fillBlank.properties.blanks.items.properties.acceptedAnswers.description]) {
     assert.match(guidance, /exact canonical answer alone is sufficient/);
     assert.match(guidance, /Synonyms are optional/);
@@ -428,7 +428,7 @@ test("fresh native quiz criticism requires typed knowledge grounding while legac
   for(const invalid of [null,"safe",{},[null],[""]])assert.equal(isKnowledgeQuizEvaluation({...legacy,knowledgeGroundingProblems:invalid},{summary:"Synthetic support."}),false);
   assert.equal(questionEvaluationSchema.name,"quiz_evaluation_v3");
   assert(questionEvaluationSchema.schema.required.includes("knowledgeGroundingProblems"));
-  assert.match(questionEvaluatorPrompt,/paired-question-evaluator-v13/);
+  assert.match(questionEvaluatorPrompt,/paired-question-evaluator-v14-source-language/);
   assert.match(questionEvaluatorPrompt,/Quiz regeneration changes only the quiz, never that retained summary/);
 });
 

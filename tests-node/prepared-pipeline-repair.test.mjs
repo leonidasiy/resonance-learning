@@ -73,14 +73,14 @@ test('actual native critic and one repair receive retained-quote rules and prese
         assert.deepEqual(task.knowledge.evidenceAnchors,candidate.evidenceAnchors);
         output={...repair,evidenceClauses:clauses};
       } else {
-        assert.equal(schema.name,'knowledge_quality_review_v11');criticCalls++;
+        assert.equal(schema.name,'knowledge_quality_review_v12');criticCalls++;
         if(criticCalls===2) {
           assert.deepEqual(task.knowledge.evidenceAnchors,candidate.evidenceAnchors.map((anchor,index)=>({...anchor,clause:clauses[index]})));
           assert.equal(task.knowledge.summary,repair.summary);
         }
         output=verdict(criticCalls===1?'revise':'pass');
       }
-      if(schema.name==='knowledge_quality_review_v11')output=syntheticAssessment(task,output);
+      if(schema.name==='knowledge_quality_review_v12')output=syntheticAssessment(task,output);
       return Response.json({id:'synthetic-response-'+(criticCalls+repairCalls),choices:[{finish_reason:'stop',message:{content:JSON.stringify(output)}}],usage:{prompt_tokens:1,completion_tokens:1}});
     };
     const forbidden=async()=>assert.fail('Captured review must not acquire external source data.');
