@@ -1,5 +1,6 @@
 // @ts-check
 import { parseOriginalImageReceipt } from "./webpage-image-cache.js";
+import { isMaterialImageReceipt, materialImageObjectKeys } from "./material-image-cache.js";
 
 /** @template T, E @typedef {{ readonly ok: true, readonly value: T } | { readonly ok: false, readonly error: E }} Result */
 /** @typedef {{ readonly success: boolean, readonly meta?: { readonly changes?: number } }} D1Result */
@@ -26,7 +27,7 @@ function succeeded(result) { return result.success === true; }
  * policy; it only removes content-bearing descendants after all public
  * commands have been authenticated and validated by the workflow service.
  *
- * @param {{ readonly database: D1DatabasePort, readonly bucket?: CleanupBucket | null, readonly sourceContent?: { readonly purge: (scope: { readonly ownerId: string, readonly sourceId: string, readonly sourceRevision?: number }) => Promise<Result<null, unknown>> }, readonly workflowRepository: CleanupWorkflowRepository, readonly now: () => string, readonly logger: (entry: CleanupLog) => void }} dependencies
+ * @param {{ readonly database: D1DatabasePort, readonly bucket?: CleanupBucket | null, readonly materialImageContent?:Pick<import('./source-content-r2.js').R2SourceContentStore,'remove'>, readonly sourceContent?: { readonly purge: (scope: { readonly ownerId: string, readonly sourceId: string, readonly sourceRevision?: number }) => Promise<Result<null, unknown>> }, readonly workflowRepository: CleanupWorkflowRepository, readonly now: () => string, readonly logger: (entry: CleanupLog) => void }} dependencies
  */
 export function createKnowledgeWorkflowCleanup(dependencies) {
   if (typeof dependencies?.database?.prepare !== "function" || typeof dependencies.database.batch !== "function" || (dependencies.sourceContent !== undefined && typeof dependencies.sourceContent.purge !== "function") || !dependencies.workflowRepository || typeof dependencies.workflowRepository.listBySource !== "function" || typeof dependencies.workflowRepository.markAbandoned !== "function" || typeof dependencies.workflowRepository.invalidateReuse !== "function" || typeof dependencies.now !== "function" || typeof dependencies.logger !== "function" || (dependencies.bucket !== undefined && dependencies.bucket !== null && typeof dependencies.bucket.delete !== "function")) throw new TypeError("Knowledge workflow cleanup dependencies are invalid.");
@@ -90,6 +91,16 @@ export function createKnowledgeWorkflowCleanup(dependencies) {
         if(receipt===null)return {ok:false,error:{kind:'WorkflowCleanupFailed'}};
         mediaRows=[...mediaRows,{object_key:receipt.objectKey}];
       }
+      const materials=await dependencies.database.prepare("SELECT stage_key,input_digest,result_json FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key GLOB 'material-image-manifest:*' AND status='completed'").bind(run.ownerId,run.runId).all();
+      if(!materials.success)return {ok:false,error:{kind:'WorkflowCleanupFailed'}};
+      for(const row of materials.results){
+        if(!record(row)||!text(row.stage_key)||!text(row.input_digest)||!text(row.result_json)||row.stage_key!==`material-image-manifest:${row.input_digest}`)return {ok:false,error:{kind:'WorkflowCleanupFailed'}};
+        const result=JSON.parse(row.result_json);
+        if(!record(result)||result.ok!==true||!isMaterialImageReceipt(result.value,run,row.input_digest))return {ok:false,error:{kind:'WorkflowCleanupFailed'}};
+        const keys=await materialImageObjectKeys(result.value);
+        if(!dependencies.materialImageContent)return {ok:false,error:{kind:'WorkflowCleanupFailed'}};
+        for(const key of [keys.manifest,...new Set(keys.images)]){const removed=await dependencies.materialImageContent.remove(key);if(!removed.ok)return {ok:false,error:{kind:'WorkflowCleanupFailed'}};}
+      }
       // Keep cache key receipts with the debit history: a pending write can
       // finish after this deletion and still needs a retryable cleanup key.
     }catch(error){
@@ -112,7 +123,7 @@ export function createKnowledgeWorkflowCleanup(dependencies) {
     try {
       const generationPrefix = `knowledge-workflow-generation:${run.runId}:`;
       const statements = [
-        dependencies.database.prepare("DELETE FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=?").bind(run.ownerId,run.runId),
+        dependencies.database.prepare("DELETE FROM knowledge_workflow_stages WHERE owner_id=? AND run_id=? AND stage_key NOT GLOB 'material-image-manifest:*'").bind(run.ownerId,run.runId),
         dependencies.database.prepare("DELETE FROM knowledge_workflow_review_evidence WHERE owner_id=? AND run_id=?").bind(run.ownerId,run.runId),
         dependencies.database.prepare("DELETE FROM source_classification_review_issues WHERE owner_id = ? AND run_id = ?").bind(run.ownerId,run.runId),
         dependencies.database.prepare("DELETE FROM source_classifications WHERE owner_id = ? AND run_id = ?").bind(run.ownerId,run.runId),

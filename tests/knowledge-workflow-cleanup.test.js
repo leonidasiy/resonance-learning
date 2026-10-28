@@ -29,7 +29,7 @@ function fixture(options = {}) {
     async run() { return { success: true, meta: { changes: 1 } }; },
   };
   const database = {
-    prepare(/** @type {string} */ query) { queries.push(query); return query.includes('SELECT page_url,attempt_key,output_json FROM knowledge_workflow_image_attempts')?{...statement,bind(){return this;},async all(){return {success:true,results:[]};}}:statement; },
+    prepare(/** @type {string} */ query) { queries.push(query); return (query.includes('SELECT page_url,attempt_key,output_json FROM knowledge_workflow_image_attempts')||query.startsWith('SELECT stage_key,input_digest,result_json FROM knowledge_workflow_stages'))?{...statement,bind(){return this;},async all(){return {success:true,results:[]};}}:statement; },
     batch: async (/** @type {readonly unknown[]} */ statements) => statements.map(() => ({ success: true, meta: { changes: 1 } })),
   };
   /** @type {import("../src/features/knowledge-workflows/workflow.js").KnowledgeWorkflowRun[]} */

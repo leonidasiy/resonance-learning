@@ -40,6 +40,8 @@ import { D1SourceIngestionRepository } from "./source-ingestion-d1.js";
 import { D1SourceRightsRegistry } from "./source-rights-registry-d1.js";
 import { D1BrowserRunCapacityLedger } from "./browser-run-capacity-d1.js";
 import { D1R2CapacityLedger } from "./r2-capacity-d1.js";
+import { resolveR2CapacityPolicy } from "./r2-capacity-policy.js";
+import { createMaterialImageContentStore } from "./material-image-content.js";
 import { PublicPageAcquirer } from "./public-page-acquirer.js";
 import { createAcquisitionClient } from "./acquisition-client.js";
 import { ACQUISITION_POLICY } from "./acquisition-policy.js";
@@ -652,6 +654,7 @@ export function createCloudflareDiscoveryWorker(environment, platform) {
             contentStore: manualContentStore,
             logger: (entry) => knowledgeWorkflowLogger({ event: entry.event, ownerId: entry.ownerId, failureKind: entry.failureKind }),
           }),
+        materialImageContent: manualConfiguration===null?undefined:createMaterialImageContentStore({database:/** @type {import('./knowledge-workflow-content-d1.js').D1DatabasePort} */(configuration.value.sourceLibraryDatabase),bucket:manualConfiguration.bucket,ownerId:configuration.value.ownerId,policy:manualConfiguration.capacityPolicy,now:()=>platform.now().toISOString(),createId:()=>hex(/** @type {(length:number)=>Uint8Array} */(platform.randomBytes)(16))}),
         bucket: isMediaBucket(environment.SOURCE_CONTENT_BUCKET)
           ? /** @type {import("./knowledge-workflow-cleanup.js").CleanupBucket} */ (environment.SOURCE_CONTENT_BUCKET)
           : null,
@@ -1565,35 +1568,18 @@ function resolveManualMaterialConfiguration(environment) {
   const bytes = typeof environment.SOURCE_MANUAL_MAX_BYTES === "string" && positiveIntegerText(environment.SOURCE_MANUAL_MAX_BYTES) ? Number(environment.SOURCE_MANUAL_MAX_BYTES) : null;
   const characters = typeof environment.SOURCE_MANUAL_MAX_CHARACTERS === "string" && positiveIntegerText(environment.SOURCE_MANUAL_MAX_CHARACTERS) ? Number(environment.SOURCE_MANUAL_MAX_CHARACTERS) : null;
   const mediaTypes = typeof environment.SOURCE_MANUAL_MEDIA_TYPES === "string" ? new Set(environment.SOURCE_MANUAL_MEDIA_TYPES.split(",").map((value) => value.trim().toLowerCase()).filter((value) => value.startsWith("text/") || ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(value))) : new Set();
-  const capacityFields = /** @type {const} */ ([
-    "SOURCE_R2_ACCOUNT_SCOPE",
-    "SOURCE_R2_STORED_BYTES_LIMIT",
-    "SOURCE_R2_CLASS_A_MONTHLY_LIMIT",
-    "SOURCE_R2_CLASS_B_MONTHLY_LIMIT",
-    "SOURCE_R2_OBSERVATION_MAX_AGE_MS",
-  ]);
-  const invalidCapacity = capacityFields.find((field) =>
-    typeof environment[field] !== "string" ||
-    environment[field].trim() === "" ||
-    (field !== "SOURCE_R2_ACCOUNT_SCOPE" &&
-      !positiveIntegerText(environment[field]))
-  );
-  if (bytes === null || characters === null || mediaTypes.size === 0 || invalidCapacity !== undefined) {
-    const field = bytes === null ? "SOURCE_MANUAL_MAX_BYTES" : characters === null ? "SOURCE_MANUAL_MAX_CHARACTERS" : mediaTypes.size === 0 ? "SOURCE_MANUAL_MEDIA_TYPES" : /** @type {NonNullable<typeof invalidCapacity>} */ (invalidCapacity);
+  const capacity=resolveR2CapacityPolicy(environment);
+  if (bytes === null || characters === null || mediaTypes.size === 0) {
+    const field = bytes === null ? "SOURCE_MANUAL_MAX_BYTES" : characters === null ? "SOURCE_MANUAL_MAX_CHARACTERS" : "SOURCE_MANUAL_MEDIA_TYPES";
     return { ok: false, error: { kind: environment[field] === undefined ? "DiscoveryDeploymentConfigurationMissing" : "DiscoveryDeploymentConfigurationInvalid", field } };
   }
+  if(!capacity.ok)return capacity;
   return { ok: true, value: Object.freeze({
     bucket: environment.SOURCE_CONTENT_BUCKET,
     maximumBytes: bytes,
     maximumCharacters: characters,
     mediaTypes,
-    capacityPolicy: Object.freeze({
-      accountScope: /** @type {string} */ (environment.SOURCE_R2_ACCOUNT_SCOPE).trim(),
-      storedBytesLimit: Number(environment.SOURCE_R2_STORED_BYTES_LIMIT),
-      classAMonthlyLimit: Number(environment.SOURCE_R2_CLASS_A_MONTHLY_LIMIT),
-      classBMonthlyLimit: Number(environment.SOURCE_R2_CLASS_B_MONTHLY_LIMIT),
-      observationMaximumAgeMs: Number(environment.SOURCE_R2_OBSERVATION_MAX_AGE_MS),
-    }),
+    capacityPolicy: capacity.value,
   }) };
 }
 

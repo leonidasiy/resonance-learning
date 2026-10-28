@@ -1,5 +1,7 @@
 // Shared executor keeps hosted and computer runs on the same persistence and control paths.
 import {resolveModelApi} from "./model-api.js";
+import { resolveR2CapacityPolicy } from "./r2-capacity-policy.js";
+import { createMaterialImageContentStore } from "./material-image-content.js";
 import {observeWorkflowDatabase} from './knowledge-workflow-database.js';
 import { WEBPAGE_IMAGE_POLICY } from './webpage-image-budget.js';
 import { D1KnowledgeWorkflowRepository } from "./knowledge-workflow-d1.js";
@@ -170,6 +172,12 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
     if (!current.ok) throw new Error(current.error.kind);
     const configurations = await step.do("validate workflow role configurations", async () => loadConfigurationSnapshots(current.value.configDigests, sources));
     if (!configurations.ok) throw new Error(configurations.error.kind);
+    let materialImageContent;
+    if(typeof current.value.materialId==='string'){
+      const capacityPolicy=resolveR2CapacityPolicy(environment);
+      if(!capacityPolicy.ok)throw new Error(`${capacityPolicy.error.kind}:${capacityPolicy.error.field}`);
+      materialImageContent=createMaterialImageContentStore({database,bucket,ownerId,policy:capacityPolicy.value,now,createId:()=>crypto.randomUUID()});
+    }
     const createRuntime = (executionAttempt = 1,cpuLimited = false) => createKnowledgeWorkflowRuntime({
       executionAttempt,cpuLimited,
       imagePolicy:WEBPAGE_IMAGE_POLICY,
@@ -192,6 +200,7 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
       reviewMedia: {readOriginal:(scope)=>mediaRepository.readOriginal(scope)},
       material: { read: (materialOwnerId, materialRunId) => materialRepository.read(materialOwnerId, materialRunId) },
       materialContent,
+      materialImageContent,
       decodeImage,
       resolveAddresses: (hostname) => resolvePublicAddresses(hostname, workerFetch),
       transition: (command) => service.advance({ ownerId: command.run.ownerId, runId: command.run.runId, expectedRevision: command.run.revision, nextState: command.nextState, ...(command.counts === undefined ? {} : { counts: command.counts }), ...(command.failureKind === undefined ? {} : { failureKind: command.failureKind }), ...(command.robotsEvidence === undefined ? {} : { robotsEvidence: command.robotsEvidence }) }),
