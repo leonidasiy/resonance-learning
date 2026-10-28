@@ -3,6 +3,7 @@
 import {
   createCloudflareDiscoveryWorker,
   deliverKnowledgeWorkflowControl,
+  projectKnowledgeWorkflowExecution,
   reconcileKnowledgeWorkflowLaunch,
   YouTubeOAuthDurableObject,
   YouTubeQuotaDurableObject,
@@ -673,7 +674,47 @@ Deno.test("retryable workflow control delivers the event to a waiting instance",
   assertEquals(calls.join("|"), 'event:{"type":"workflow-control","payload":{"action":"resume"}}');
 });
 
-Deno.test("paused workflow control resumes only after direct event delivery is rejected", async () => {
+Deno.test("paused workflow controls resume even when the event queue accepts delivery", async () => {
+  for (const action of ["resume", "retry-quizzes"]) {
+    /** @type {string[]} */ const calls = [];
+    let status = "paused";
+    await deliverKnowledgeWorkflowControl({
+      status: async () => ({ status }),
+      resume: async () => { calls.push("resume"); status = "running"; },
+      sendEvent: async () => { calls.push("event"); },
+    }, action);
+    assertEquals(status, "running");
+    assertEquals(calls.join("|"), "resume|event");
+  }
+});
+
+Deno.test("active database runs expose a paused platform instance as recoverable", async () => {
+  /** @type {import("../src/features/knowledge-workflows/workflow.js").KnowledgeWorkflowRun} */
+  const run = {
+    ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1,
+    canonicalSourceIdentity: "https://example.test", contentSignature: "signature",
+    state: "extraction-loop", revision: 2, idempotencyKey: "start-a", configDigests: {},
+    extractionStartedAt: null, extractionDeadlineAt: null, decisionRequired: null,
+    counts: { pages: 18, knowledgePoints: 68, acceptedQuizzes: 65, pendingQuizzes: 0 },
+    failureKind: null, reused: false, createdAt: now.toISOString(), updatedAt: now.toISOString(),
+  };
+  const binding = {
+    get: async () => ({ id: "run-a", status: async () => ({ status: "paused" }), pause: async () => {}, resume: async () => {}, sendEvent: async () => {}, terminate: async () => {} }),
+    create: async () => { throw new Error("Recovery must use the existing instance"); },
+  };
+  const projected = await projectKnowledgeWorkflowExecution(run, binding);
+  assertEquals(projected.ok, true);
+  if (!projected.ok) throw new Error(projected.error.kind);
+  assertEquals(projected.value.state, "retryable-failure");
+  assertEquals(projected.value.retryState, "extraction-loop");
+  assertEquals(projected.value.failureKind, "WorkflowExecutionStopped");
+  assertEquals(projected.value.counts, run.counts);
+  const paused = { ...run, state: /** @type {const} */ ("paused") };
+  const preserved = await projectKnowledgeWorkflowExecution(paused, binding);
+  assertEquals(preserved.ok && preserved.value, paused);
+});
+
+Deno.test("workflow control falls back to resume after direct event delivery is rejected", async () => {
   /** @type {string[]} */ const calls = [];
   let directEvents = 0;
   await deliverKnowledgeWorkflowControl({

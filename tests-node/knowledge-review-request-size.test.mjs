@@ -37,9 +37,13 @@ function matches(schema,value) {
  return true;
 }
 
-test('actual reviewer transport reduces schema size without changing inputs, limits or durable schema',async()=>{
+test('actual reviewer transport removes repeated prior schemas without changing input or limits',async()=>{
  const command=fixture(),before=structuredClone(command),{body}=await request(command);
- const original=JSON.stringify(command.responseSchema.schema),compact=JSON.stringify(body.response_format.json_schema.schema);
+ const legacy=structuredClone(command.responseSchema),prior=legacy.schema.properties.audit.properties.clauses.items.properties.previousEvidence.items;
+ delete prior.properties.start.maximum;delete prior.properties.end.maximum;
+ prior.anyOf=command.input.auditEvidence.previousContent.map(entry=>({type:'object',additionalProperties:false,required:['priorId','start','end'],properties:{priorId:{type:'string',enum:[entry.id]},start:{type:'integer',minimum:0,maximum:entry.tokens.length-1},end:{type:'integer',minimum:1,maximum:entry.tokens.length}}}));
+ const oldRequest=await request({...command,responseSchema:legacy});
+ const original=JSON.stringify(oldRequest.body.response_format.json_schema.schema),compact=JSON.stringify(body.response_format.json_schema.schema);
  assert(compact.length<original.length*.65,`Expected at least 35% schema reduction; ${compact.length}/${original.length}`);
  assert.deepEqual(command,before);
  assert.deepEqual(JSON.parse(body.messages[1].content.slice('<task_input>\n'.length,-'\n</task_input>'.length)),command.input);
@@ -58,7 +62,8 @@ test('factored source, prior and image citations accept and reject the same boun
     for(const start of [-1,0,length-1,length,0.5])for(const end of [0,1,length,length+1])cases.push([{[idKey]:id,start,end}]);
     cases.push([{[idKey]:id,start:0,end:1,extra:true}],[{[idKey]:id,end:1}],[{[idKey]:id,start:'0',end:1}]);
     assert(matches(compactEvidence[key],[{[idKey]:id,start:0,end:1}]));
-    assert(!matches(compactEvidence[key],[{[idKey]:id,start:0,end:length+1}]));
+    const maximum=key==='previousEvidence'?Math.max(...entries.map(entry=>entry.tokens.length)):length;
+    assert(!matches(compactEvidence[key],[{[idKey]:id,start:0,end:maximum+1}]));
    }
    for(const value of cases)assert.equal(matches(compactEvidence[key],value),matches(originalEvidence[key],value),JSON.stringify({key,value}));
   }

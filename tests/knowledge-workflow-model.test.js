@@ -275,3 +275,29 @@ Deno.test("knowledge model rejects provider redirects without forwarding credent
   else throw new Error("Expected a rejected redirect response.");
   assertEquals(calls, 1);
 });
+
+Deno.test("model retains reported cache and cost observations without inventing missing usage", async () => {
+  for (const reported of [undefined, {}, {cost:null,prompt_tokens_details:null}, {cost:0,prompt_tokens_details:{cached_tokens:0,cache_write_tokens:0}}, {cost:0.000123456,prompt_tokens_details:{cached_tokens:123,cache_write_tokens:45}}]) {
+    const model=createOpenRouterKnowledgeModel({apiKey:"synthetic",endpoint:"https://api.example.test/chat/completions",model:"synthetic",timeoutMs:1000,maximumInputCharacters:10000,now:Date.now,logger:()=>{},fetch:async()=>Response.json({id:"cache-receipt",choices:[{finish_reason:"stop",message:{content:"{}"}}],...(reported===undefined?{}:{usage:reported})})});
+    const result=await model.generate(command());
+    if(!result.ok)throw new Error(result.error.kind);
+    assertEquals(result.value.requestId,"cache-receipt");
+    assertEquals(result.value.costNanodollars,reported?.cost===undefined||reported.cost===null?null:Math.round(reported.cost*1_000_000_000));
+    assertEquals(result.value.cachedInputTokens,reported?.prompt_tokens_details?.cached_tokens??null);
+    assertEquals(result.value.cacheWriteInputTokens,reported?.prompt_tokens_details?.cache_write_tokens??null);
+  }
+});
+
+Deno.test("model rejects malformed reported cache counters and unsafe costs with field context", async () => {
+  const cases=[
+    {usage:{cost:-1},field:"usage.cost"},{usage:{cost:"0.1"},field:"usage.cost"},{usage:{cost:1e100},field:"usage.cost"},
+    {usage:{prompt_tokens_details:"invalid"},field:"usage.prompt_tokens_details"},
+    ...["cached_tokens","cache_write_tokens"].flatMap(field=>[-1,0.5,"2",Number.MAX_SAFE_INTEGER+1].map(value=>({usage:{prompt_tokens_details:{[field]:value}},field:`usage.prompt_tokens_details.${field}`}))),
+  ];
+  for(const sample of cases){
+    const model=createOpenRouterKnowledgeModel({apiKey:"synthetic",endpoint:"https://api.example.test/chat/completions",model:"synthetic",timeoutMs:1000,maximumInputCharacters:10000,now:Date.now,logger:()=>{},fetch:async()=>Response.json({id:"cache-receipt",choices:[{finish_reason:"stop",message:{content:"{}"}}],usage:sample.usage})});
+    const result=await model.generate(command());
+    if(result.ok||result.error.kind!=="KnowledgeModelUsageInvalid")throw new Error("Malformed reported usage was accepted.");
+    assertEquals(result.error.field,sample.field);
+  }
+});

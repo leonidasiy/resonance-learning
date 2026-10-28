@@ -2549,7 +2549,7 @@ async function projectKnowledgeWorkflowExecution(run,binding) {
   if(!isWorkflowRetryStage(run.state))return {ok:true,value:run};
   try {
     const instance=await binding.get(workflowInstanceId(run.runId));
-    if(typeof instance.status!=="function" || (await instance.status()).status!=="errored")return {ok:true,value:run};
+    if(typeof instance.status!=="function" || !["errored","paused"].includes((await instance.status()).status))return {ok:true,value:run};
     return {ok:true,value:{...run,state:"retryable-failure",retryState:run.state,failureKind:"WorkflowExecutionStopped"}};
   }catch(error){if(!(error instanceof Error))throw error;return {ok:false,error:{kind:"WorkflowInstanceStatusFailed"}};}
 }
@@ -2557,8 +2557,8 @@ async function projectKnowledgeWorkflowExecution(run,binding) {
 /**
  * Deliver a control command to a live Workflow instance. A retryable Workflow
  * is waiting at step.waitForEvent, so the matching event is authoritative and
- * is delivered first with bounded retries. If direct delivery is rejected, the
- * instance may be paused; resume it once and redeliver the event.
+ * is delivered with bounded retries. A paused instance must be resumed even
+ * when its event queue accepts delivery; rejected delivery also retries resume.
  * @param {{ readonly status?: () => Promise<{readonly status:string}>, readonly restart?: () => Promise<void>, readonly pause?: () => Promise<void>, readonly resume?: () => Promise<void>, readonly sendEvent?: (event: { readonly type: string, readonly payload?: unknown }) => Promise<void>, readonly terminate?: (options: { readonly rollback: boolean }) => Promise<void> }} instance
  * @param {unknown} action
  * @param {boolean} [restartCompleted]
@@ -2572,12 +2572,14 @@ async function deliverKnowledgeWorkflowControl(instance, action, restartComplete
     return;
   }
   if (action === "resume" || action === "retry-quizzes") {
-    if (restartCompleted || typeof instance.status === "function" && ["errored","complete"].includes((await instance.status()).status)) {
+    const status = restartCompleted ? "complete" : typeof instance.status === "function" ? (await instance.status()).status : null;
+    if (["errored","complete"].includes(status ?? "")) {
       if (typeof instance.restart !== "function") throw new TypeError("Knowledge workflow restart is unavailable.");
       await instance.restart();
       return;
     }
     if (typeof instance.resume !== "function" || typeof instance.sendEvent !== "function") throw new TypeError("Knowledge workflow resume control is unavailable.");
+    if (status === "paused") await instance.resume();
     const event = { type: "workflow-control", payload: { action } };
     let lastError = null;
     for (const delay of [0, 100, 250]) {

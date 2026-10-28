@@ -262,16 +262,33 @@ test('historical canonical v6 completed cache replays without a fresh validator 
  }finally{db.close();}
 });
 
-test('citation schema bounds each referenced immutable source and prior list independently',()=>{
+test('citation schema keeps exact source bounds and compact prior IDs with shared outer bounds',()=>{
  const candidate={...point,evidenceAnchors:[{...point.evidenceAnchors[0],quote:'Short.'},{...point.evidenceAnchors[0],quote:'A longer retained source relationship with two conditions.'}]};
  const prior={lessOften:[],previousKnowledge:[{id:'short',summary:'Prior.'},{id:'long',summary:'A different longer previous relationship with its own conditions.'}],previousQuizzes:[]};
  const input=knowledgeReviewAuditInput(candidate,prior,{}),before=structuredClone(input);
- for(const entry of [...input.retainedText,...input.previousContent])assert.equal(entry.endExclusiveTokenCount,entry.tokens.length);
- const schema=knowledgeReviewSchemaFor(prior,input),e=schema.schema.properties.audit.properties.finalClause.anyOf[0].properties;
- for(const [branches,lists,key,idKey] of [[e.textEvidence.items.anyOf,input.retainedText,'anchorIndex','anchorIndex'],[e.previousEvidence.items.anyOf,input.previousContent,'priorId','id']]){
-  assert.equal(branches.length,lists.length);for(let index=0;index<lists.length;index++){const branch=branches[index],entry=lists[index];assert.deepEqual(branch.properties[key].enum,[entry[idKey]]);assert.equal(branch.properties.start.maximum,entry.tokens.length-1);assert.equal(branch.properties.end.maximum,entry.tokens.length);assert.equal(branch.additionalProperties,false);assert(branch.required.includes('end'));}
+ const e=knowledgeReviewSchemaFor(prior,input).schema.properties.audit.properties.finalClause.anyOf[0].properties;
+ for(const [index,branch] of e.textEvidence.items.anyOf.entries()){
+  const entry=input.retainedText[index];assert.deepEqual(branch.properties.anchorIndex.enum,[entry.anchorIndex]);assert.equal(branch.properties.start.maximum,entry.tokens.length-1);assert.equal(branch.properties.end.maximum,entry.tokens.length);
  }
- assert.notEqual(input.retainedText[0].endExclusiveTokenCount,input.summaryTokenCount);assert.deepEqual(input,before);
+ const properties=e.previousEvidence.items.properties,maximum=Math.max(...input.previousContent.map(item=>item.tokens.length));
+ assert.equal(Object.hasOwn(e.previousEvidence.items,'anyOf'),false);
+ assert.deepEqual(properties.priorId.enum,input.previousContent.map(item=>item.id));
+ assert.equal(properties.start.maximum,maximum-1);assert.equal(properties.end.maximum,maximum);assert.deepEqual(input,before);
+});
+test('large prior history grows by IDs without repeated per-ID citation schemas',()=>{
+ const prior={lessOften:[],previousKnowledge:Array.from({length:67},(_,i)=>({id:'source:'+String(i).padStart(32,'0')+':1:'+ 'relationship-'.repeat(6)+i,summary:'A retained prior relationship.'})),previousQuizzes:Array.from({length:65},()=>({prompt:'Question?',answer:'Answer.'}))};
+ const input=knowledgeReviewAuditInput(point,prior,{}),schema=knowledgeReviewSchemaFor(prior,input);
+ const ids=input.previousContent.map(item=>item.id),serialized=JSON.stringify(schema);
+ for(const id of ids)assert.equal(serialized.split(JSON.stringify(id)).length-1,4,'Each prior ID appears only in the four citation enums');
+ assert.equal(input.previousContent.length,132);
+});
+for(const location of ['retrieval','clause','final'])for(const defect of ['foreign-id','short-prior-range'])test(`compact prior schema retains runtime ${location} ${defect} rejection`,async()=>{
+ const prior={...context,previousKnowledge:[...context.previousKnowledge,{id:'long',summary:'A substantially longer prior relationship with several conditions and consequences.'}]},value=verdict();
+ const citation={priorId:defect==='foreign-id'?'knowledge:foreign':'knowledge:rule',start:0,end:7};
+ if(location==='retrieval')value.retrievalComparison={...value.retrievalComparison,priorAnswer:'An alleged answer.',priorEvidence:[citation]};
+ else if(location==='clause')value.audit.clauses[0].previousEvidence=[citation];
+ else value.audit.finalClause.previousEvidence=[citation];
+ const {result,critics,repairs}=await review(value,{reviewContext:prior});invalid(result);assert.equal(critics,4);assert.equal(repairs,0);
 });
 test('empty referenced content offers no citation branch or contradictory numeric schema',()=>{
  const candidate={...point,evidenceAnchors:[]},prior={lessOften:[],previousKnowledge:[{id:'empty',summary:''}],previousQuizzes:[]};

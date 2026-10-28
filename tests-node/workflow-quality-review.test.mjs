@@ -126,6 +126,8 @@ for(const {anchors,mismatch,media} of productionCases)test(`production repair sc
         return Response.json({id:'synthetic-purpose',choices:[{finish_reason:'stop',message:{content:JSON.stringify({purpose:'evidence',imageId:task.imageId,imageDigest:task.imageDigest,visibleEvidence:'Constructed directly depicted relationship.'})}}],usage:{prompt_tokens:1,completion_tokens:1}});
       }
       assert.deepEqual(task.sourceEvidence,sourceEvidence);
+      assert.equal(Object.hasOwn(task,'previousKnowledge'),false,'Canonical audit retains prior knowledge once');
+      assert.equal(Object.hasOwn(task,'previousQuizzes'),false,'Canonical audit retains prior quizzes once');
       assert.deepEqual(input.memory,[]);
       const pixels=Array.isArray(message)?message.filter(part=>part.type==='image_url'):[];
       const schema=body.response_format.json_schema;
@@ -172,7 +174,7 @@ for(const {anchors,mismatch,media} of productionCases)test(`production repair sc
         assert.equal(clauseProperties.claimEnd.maximum,task.auditEvidence.summaryNonFinalEndMaximum);
         assert.equal(clauseProperties.claimEnd.type,'integer');assert.deepEqual(schema.schema.properties.audit.properties.finalClause.anyOf[0].required,['textEvidence','pixelEvidence','previousEvidence','supportsWholeClaim']);assert.equal(Object.hasOwn(schema.schema.properties.audit.properties.finalClause.anyOf[0].properties,'claimEnd'),false);
         assert.deepEqual(task.auditEvidence.previousContent,media==='cached-legacy-context'?knowledgeReviewAuditInput(task.knowledge,legacyContext,sourceEvidence).previousContent:[]);
-        if(media==='cached-legacy-context')assert.deepEqual(task.previousQuizzes,legacyContext.previousQuizzes);
+        if(media==='cached-legacy-context')assert(task.auditEvidence.previousContent.some(item=>item.id==='quiz:0'));
         const sourceCitation=schema.schema.properties.audit.properties.finalClause.anyOf[0].properties.textEvidence.items;
         assert.equal(sourceCitation.type,'object');assert.equal(sourceCitation.additionalProperties,false);assert.deepEqual(sourceCitation.required,['anchorIndex','start','end']);
         assert.deepEqual(sourceCitation.properties.anchorIndex.enum,Array.from({length:anchors},(_,index)=>index));assert.deepEqual(sourceCitation.anyOf.map(branch=>({anchorIndex:(branch.properties.anchorIndex.enum??sourceCitation.properties.anchorIndex.enum)[0],startMaximum:branch.properties.start.maximum,endMaximum:branch.properties.end.maximum})),candidate.evidenceAnchors.map((anchor,anchorIndex)=>({anchorIndex,startMaximum:knowledgeReviewTokens(anchor.quote).length-1,endMaximum:knowledgeReviewTokens(anchor.quote).length})));assert.match(body.messages[0].content,/summaryTokenCount bounds only the summary/);
