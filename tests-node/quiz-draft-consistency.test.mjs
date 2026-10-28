@@ -226,8 +226,10 @@ import { createAgentConfigurationLoader } from "../src/features/knowledge-workfl
 import { D1KnowledgeWorkflowRepository } from "../worker/knowledge-workflow-d1.js";
 import { D1KnowledgeContentRepository } from "../worker/knowledge-workflow-content-d1.js";
 import { WEBPAGE_IMAGE_POLICY } from "../worker/webpage-image-budget.js";
-for (const scenario of ['valid','malformed','importance-rejected']) {
+import { AgentExecutionBoundaryFailure } from "../src/features/knowledge-workflows/harness.js";
+for (const scenario of ['valid','malformed','importance-rejected','review-resume']) {
   const malformed=scenario==='malformed', importanceRejected=scenario==='importance-rejected';
+  const reviewResume=scenario==='review-resume';
   test(`actual runtime provider boundary preserves raw history; scenario=${scenario}`, async () => {
     const db = new DatabaseSync(":memory:");
     try {
@@ -236,6 +238,7 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
           n.endsWith(".sql")
         ).sort()
       ) db.exec(await readFile("worker/migrations/" + name, "utf8"));
+      let replaying=false, replayedCriticStages=0;
       const database = {
           prepare(sql) {
             let values = [];
@@ -248,7 +251,10 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
                 values = v;
                 return this;
               },
-              first: async () => db.prepare(sql).get(...values) ?? null,
+              first: async () => {
+                if(replaying&&sql.startsWith('SELECT input_digest,status,result_json')&&String(values[2]).startsWith('question-evaluator:quiz-')&&String(values[2]).includes(':mcq-1:'))replayedCriticStages++;
+                return db.prepare(sql).get(...values) ?? null;
+              },
               all: async () => ({
                 success: true,
                 results: db.prepare(sql).all(...values),
@@ -384,7 +390,7 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
           },
         }),
       );
-      let drafts = 0, critics = 0, importanceReviews = 0, wireFailure;
+      let drafts = 0, critics = 0, importanceReviews = 0, wireFailure, interrupted=false;
       const raw = draft();
       if (malformed) {
         raw.fillBlank.blanks.push({
@@ -415,6 +421,7 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
               schema = body.response_format.json_schema;
             let output;
             if (schema.name === "paired_quiz_v4") {
+              if(reviewResume&&drafts===1&&!interrupted){interrupted=true;const error=new AgentExecutionBoundaryFailure({kind:'EvaluationCancelled'});error.notStarted=true;throw error;}
               drafts++;
               assert.equal(body.max_tokens, 16384);
               assert.equal(schema.schema.anyOf, undefined);
@@ -441,7 +448,7 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
                 ["NAD+", "oxidized carrier"],
               );
               output = {
-                score: 9,
+                score: reviewResume&&critics===1?6:9,
                 reasons: ["Constructed grounded pair."],
                 feedback: "Keep the source-supported pair.",
                 groundingProblems: [],
@@ -462,16 +469,24 @@ for (const scenario of ['valid','malformed','importance-rejected']) {
           }
         },
       });
-      const actor = unwrap(runtime.createQuizActorForRun(run)),
-        result = await actor.run({
+      const actor = unwrap(runtime.createQuizActorForRun(run));
+      const command = {
           ownerId: run.ownerId,
           runId: run.runId,
           points: [point],
-        });
+        };
+      let result;
+      if(reviewResume){
+        await assert.rejects(actor.run(command),AgentExecutionBoundaryFailure);
+        assert.deepEqual([drafts,critics,importanceReviews],[1,1,1]);
+        replaying=true;
+        result=await unwrap(runtime.createQuizActorForRun(run)).run(command);
+        assert.equal(replayedCriticStages,0,'Resume reuses the completed normalized review without restoring its model stages');
+      }else result=await actor.run(command);
       if(malformed){assert.equal(result.ok,false);assert.equal(result.error.kind,"QuizDraftSchemaInvalid");assert.equal(result.error.technicalRetriesExhausted,true);assert.equal(result.error.technicalAttempts,4);assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quizzes").get().n,0);assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points").get().n,1);assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quiz_attempts").get().n,0);}
       else if(importanceRejected){assert(result.ok,JSON.stringify({result,wireFailure}));assert.equal(result.value.dispositions[0].status,'abandoned');assert.equal(result.value.dispositions[0].failureKind,'QuizScoreBelowThreshold');assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_quizzes").get().n,0);assert.equal(db.prepare("SELECT count(*) AS n FROM extraction_knowledge_points").get().n,1);}
       else {assert(result.ok,JSON.stringify({result,wireFailure}));assert.equal(result.value.dispositions[0].status,"accepted");}
-      assert.deepEqual([drafts, critics, importanceReviews], malformed ? [4, 0, 0] : importanceRejected ? [4, 0, 4] : [1, 1, 1]);
+      assert.deepEqual([drafts, critics, importanceReviews], malformed ? [4, 0, 0] : importanceRejected ? [4, 0, 4] : reviewResume ? [2,2,2] : [1, 1, 1]);
       const rows = db.prepare(
         "SELECT result_json FROM knowledge_workflow_stages WHERE stage_key LIKE 'question-generator:%'",
       ).all();

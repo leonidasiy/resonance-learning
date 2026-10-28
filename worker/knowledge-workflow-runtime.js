@@ -1717,6 +1717,9 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       await awaitReview?.();
       dependencies.logger({event:'quiz-stage-wait',runId:run.runId,stage:'review',durationMs:Math.max(0,dependencies.nowMs()-queuedAt)});
       if(phase)phase.phase="review";
+      // Resume a completed critic without rebuilding evidence and replaying its paid-stage preparation.
+      const signature=await imageHash(new TextEncoder().encode(JSON.stringify({input,config:run.configDigests,protocol:{review:questionEvaluatorPrompt,importance:quizAnswerImportancePrompt,importanceSchema:quizAnswerImportanceSchema,evaluationSchema:questionEvaluationSchema}})));
+      return stages.run(run,`quiz-review-ready:${input.draft.id}:${input.attempt}${reviewerSuffix}:${signature}`,signature,async()=>{
       const pair=input.draft.pairedQuiz;
       if(pair===undefined)return {ok:false,error:{kind:'QuizDraftSchemaInvalid'}};
       const importance=await generate(run,'question-evaluator',`quiz-answer-importance-${input.draft.id}-${input.attempt}${reviewerSuffix}`,quizAnswerImportancePrompt,{knowledge:input.knowledge.summary,pairedQuiz:pair},2048,undefined,{responseSchema:quizAnswerImportanceSchema,technicalAttempt:input.technicalAttempt});
@@ -1738,6 +1741,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       dependencies.logger({event:'quiz-stage-duration',runId:run.runId,stage:'review',durationMs:Math.max(0,dependencies.nowMs()-reviewStarted),...(evaluated.ok?{}:{failureKind:evaluated.error.kind})});
       if (!evaluated.ok) return evaluated;
       return normalizeKnowledgeQuizEvaluation(evaluated.value, input.knowledge);
+      },{resumeSafe:true});
     } };
     return createQuizActorCritic({ technicalRetries:dependencies.technicalRetries, generator, reviewer, beforeGenerate, repository: quizRepository, now: dependencies.now, logger: (entry) => dependencies.logger({ event: entry.event, runId: run.runId, failureKind: entry.failureKind,durationMs:entry.durationMs }), maxAttempts: QUIZ_MAX_ATTEMPTS });
   }
