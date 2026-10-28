@@ -29,7 +29,7 @@ import { createRightsAssessor } from "../src/features/knowledge-workflows/rights
 import { createRobotsGate } from "../src/features/knowledge-workflows/robots.js";
 import { verifyPublicWebpage } from './webpage-access.js';
 import { discoverHybridNavigation, boundHybridExtractionPlan, createRobotsNavigationHandoff, navigationWithinScope, isNavigationObservation } from './hybrid-navigation.js';
-import { createKnowledgeQualityReviewer, sourcePrecisionInstruction, knowledgeReviewerPrompt, knowledgeRepairPrompt, knowledgeReviewSchemaFor, knowledgeReviewAuditInput, knowledgeRepairSchemaFor, knowledgeRepairRequirements, knowledgeCriticRepairContextPrompt } from "../src/features/knowledge-workflows/quality-review.js";
+import { createKnowledgeQualityReviewer, sourcePrecisionInstruction, knowledgeReviewerPrompt, knowledgeRepairPrompt, knowledgeReviewSchemaFor, knowledgeRepairSchemaFor, knowledgeRepairRequirements, knowledgeCriticRepairContextPrompt } from "../src/features/knowledge-workflows/quality-review.js";
 import { D1WorkflowStageRepository } from "./knowledge-workflow-stages-d1.js";
 import { D1KnowledgeWorkflowProgressRepository } from "./knowledge-workflow-progress-d1.js";
 import { readFailedQuizItems, exhaustedQuizTechnicalFailure } from "./knowledge-workflow-quiz-failures.js";
@@ -968,7 +968,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     return { ok: true, value: null };
   }
 
-  /** @param {KnowledgeWorkflowRun} run @param {(point:KnowledgePoint,observation:PageObservation)=>Promise<import('./knowledge-workflow-parallel-review.js').ReviewResult>} review @param {(point:KnowledgePoint,binding:NonNullable<import('./webpage-images.js').ImageAssociation['binding']>)=>void} [restore] */
+  /** @param {KnowledgeWorkflowRun} run @param {(point:KnowledgePoint,observation:PageObservation)=>Promise<import('./knowledge-workflow-parallel-review.js').ReviewResult>} review @param {(point:KnowledgePoint,binding:NonNullable<import('./webpage-images.js').ImageAssociation['binding']>)=>Promise<Result<null,{kind:string}>>} [restore] */
   function parallelKnowledgeReviewer(run,review,restore) {
     return {review,
       /** @param {readonly KnowledgePoint[]} points @param {PageObservation} observation */
@@ -1045,7 +1045,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           for(const entry of entries)ready.set(entry.id,entry.result);
         }
         const final=points.map(point=>ready.get(point.id)??results[window.findIndex(candidate=>candidate.id===point.id)]??{ok:/** @type {const} */(false),error:{kind:'KnowledgeReviewChunkPending'}});
-        for(const result of final)if(result.ok&&result.value!==null&&result.binding!==undefined)restore?.(result.value,result.binding);
+        for(const result of final)if(result.ok&&result.value!==null&&result.binding!==undefined&&restore){const restored=await restore(result.value,result.binding);if(!restored.ok)return points.map(()=>restored);}
         return final;
       },
     };
@@ -1166,12 +1166,11 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       const context=await stages.run(run,`knowledge-quality-context:${signature}:${point.id}`,signature,()=>content.reviewContext({ownerId:run.ownerId,runId:run.runId,sourceId:run.sourceId,knowledgeId:point.id}),{resumeSafe:true});
       if(!context.ok)return context;
       const reviewer=createKnowledgeQualityReviewer({technicalRetries:dependencies.technicalRetries,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:entry.field==='review'?'question-evaluator':'knowledge-scraper'}),context:context.value,sourceMode,sourceEvidence,imagePurpose,digest:(value)=>imageHash(new TextEncoder().encode(value)),
-        evaluate:(candidate,attempt,repairContext,technicalAttempt=1,technicalRetryFeedback)=>{
-          const currentAttachments=candidate.mediaCandidates.length?attachments:[],auditEvidence=knowledgeReviewAuditInput(candidate,context.value,sourceEvidence);
+        evaluate:(candidate,attempt,repairContext,technicalAttempt=1,technicalRetryFeedback,auditEvidence)=>{
+          const currentAttachments=candidate.mediaCandidates.length?attachments:[];
           return generate(run,'question-evaluator',`knowledge-quality-${point.id}-${attempt}${retrySuffix}`,repairContext===undefined?knowledgeReviewerPrompt:knowledgeReviewerPrompt+"\n"+knowledgeCriticRepairContextPrompt,{knowledge:candidate,sourceEvidence,sourceMode,imagePurpose,...context.value,auditEvidence,...(attempt===1?{}:{reviewAttempt:attempt}),...(savedProgress.value.retryGeneration?{retryGeneration:savedProgress.value.retryGeneration}:{}),currentAttachmentIds:currentAttachments.map(attachment=>attachment.id),...(technicalRetryFeedback===undefined?{}:{technicalRetryFeedback}),...(repairContext===undefined?{}:{repairContext})},knowledgeCriticMaximumOutputTokens,currentAttachments,{responseSchema:knowledgeReviewSchemaFor(context.value,auditEvidence,currentAttachments.map(attachment=>attachment.id)),technicalAttempt});
         },
-        regenerate:async(candidate,verdict,retrievalComparison,technicalAttempt=1,technicalRetryFeedback)=>{
-          const auditEvidence=knowledgeReviewAuditInput(candidate,context.value,sourceEvidence);
+        regenerate:async(candidate,verdict,retrievalComparison,technicalAttempt=1,technicalRetryFeedback,auditEvidence)=>{
           const taskId=`knowledge-repair-${point.id}${retrySuffix}`,input={knowledge:candidate,review:verdict,sourceEvidence,sourceMode,imagePurpose,...context.value,auditEvidence,requiredRevisions:knowledgeRepairRequirements(candidate,verdict,sourceMode,auditEvidence),retrievalComparison,currentAttachmentIds:attachments.map(attachment=>attachment.id)},options={responseSchema:knowledgeRepairSchemaFor(candidate),budgetPageUrl:point.attribution.sourceUrl,technicalAttempt};
           // Replay any pre-feedback numbered attempt so new input cannot replenish its allowance.
           if(technicalAttempt>1&&technicalRetryFeedback!==undefined){
@@ -1238,6 +1237,9 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     /** @type {Map<string,{images:readonly (EmbeddedImage & {readonly bytes:Uint8Array,readonly mediaType:"image/png"|"image/jpeg"|"image/webp"|"image/gif"})[],warnings:string[]}>} */
     const embeddedImagesByPage = new Map();
     /** @type {Map<string,import('./webpage-images.js').ImageAssociation>} */ const associations=new Map();
+    /** @type {Map<string,(imageId:string)=>Promise<Result<(EmbeddedImage & {bytes:Uint8Array,mediaType:'image/png'|'image/jpeg'|'image/webp'|'image/gif'})|undefined,{kind:string}>>>} */ const restorePageImage=new Map();
+    /** @type {Map<string,string>} */ const associatedImageIds=new Map();
+
     /** @type {import("../src/features/knowledge-workflows/extraction.js").ExtractionPlanner} */
     const planner = {
       plan: async (input) => {
@@ -1377,16 +1379,28 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       if(!capturedPages.has(responseUrl)&&evidence!==null){
         if(!isWebpageEvidence(evidence)||evidence.url!==responseUrl)return {ok:false,error:{kind:'WebpageEvidenceUnavailable'}};
         capturedPages.set(responseUrl,evidence);
-        const restored=[];
-        if(images.length){
-          const bucket=dependencies.mediaBucket;
-          if(!bucket?.get||!bucket.put||run.extractionDeadlineAt===null)return {ok:false,error:{kind:'KnowledgeReviewImageUnavailable'}};
-          const budget=createWebpageImageBudget({database:dependencies.database,policy:dependencies.imagePolicy,scope:{ownerId:run.ownerId,runId:run.runId,pageUrl:command.url},maximumPages:WEBPAGE_EXTRACTION_POLICY.maximumPages,deadlineAtMs:Date.parse(run.extractionDeadlineAt),now:dependencies.nowMs,logger:dependencies.logger});
-          const cache=createWebpageImageCache({database:dependencies.database,bucket:/** @type {import('./webpage-image-cache.js').ImageCacheBucket} */(bucket),budget,scope:{ownerId:run.ownerId,runId:run.runId,sourceRevision:run.sourceRevision,pageUrl:command.url},logger:dependencies.logger});
-          for(const image of images){const original=await cache.load(image);if(!original.ok)return original;if(original.value===null)return {ok:false,error:{kind:'KnowledgeReviewImageUnavailable'}};restored.push({...image,...original.value});}
-        }
-        embeddedImagesByPage.set(responseUrl,{images:restored,warnings:[]});
-        for(const {imageId,...match} of matches){const image=restored.find(image=>image.id===imageId);if(image!==undefined)associations.set(match.normalizedHash,{...match,image});}
+        embeddedImagesByPage.set(responseUrl,{images:[],warnings:[]});
+        for(const {imageId,...match} of matches)if(imageId!==undefined){associatedImageIds.set(match.normalizedHash,imageId);associations.set(match.normalizedHash,match);}
+        // Restore only pixels needed by this review or publication, not every original on the page.
+        /** @type {Map<string,ReturnType<NonNullable<ReturnType<typeof restorePageImage.get>>>>} */ const restoring=new Map();
+        restorePageImage.set(responseUrl,imageId=>{
+          const pending=restoring.get(imageId);if(pending!==undefined)return pending;
+          const restored=(async()=>{
+            const page=embeddedImagesByPage.get(responseUrl),existing=page?.images.find(image=>image.id===imageId);
+            if(existing!==undefined)return {ok:/** @type {const} */(true),value:existing};
+            const metadata=images.find(image=>image.id===imageId);if(metadata===undefined)return {ok:/** @type {const} */(true),value:undefined};
+            const bucket=dependencies.mediaBucket;
+            if(!bucket?.get||!bucket.put||run.extractionDeadlineAt===null)return {ok:/** @type {const} */(false),error:{kind:'KnowledgeReviewImageUnavailable'}};
+            const budget=createWebpageImageBudget({database:dependencies.database,policy:dependencies.imagePolicy,scope:{ownerId:run.ownerId,runId:run.runId,pageUrl:command.url},maximumPages:WEBPAGE_EXTRACTION_POLICY.maximumPages,deadlineAtMs:Date.parse(run.extractionDeadlineAt),now:dependencies.nowMs,logger:dependencies.logger});
+            const cache=createWebpageImageCache({database:dependencies.database,bucket:/** @type {import('./webpage-image-cache.js').ImageCacheBucket} */(bucket),budget,scope:{ownerId:run.ownerId,runId:run.runId,sourceRevision:run.sourceRevision,pageUrl:command.url},logger:dependencies.logger});
+            const original=await cache.load(metadata);if(!original.ok)return original;if(original.value===null)return {ok:/** @type {const} */(false),error:{kind:'KnowledgeReviewImageUnavailable'}};
+            const image={...metadata,...original.value};
+            embeddedImagesByPage.set(responseUrl,{images:[...(embeddedImagesByPage.get(responseUrl)?.images??[]),image],warnings:[]});
+            return {ok:/** @type {const} */(true),value:image};
+          })();
+          restoring.set(imageId,restored);
+          return restored;
+        });
       }
       return {ok:true,value:observation};
     }};
@@ -1396,7 +1410,10 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       const association=associations.get(point.normalizedHash);
       const figureIds=captured.blocks.filter(block=>point.evidenceAnchors.some(anchor=>anchor.blockId===block.id)).flatMap(block=>block.figureId===null?[]:[block.figureId]);
       const sourceImage=captured.images.find(image=>image.occurrences.some(occurrence=>occurrence.figureId!==null&&figureIds.includes(occurrence.figureId)));
-      const image=association?.status==='match'||association?.status==='review-pending'?association.image:embeddedImagesByPage.get(point.attribution.sourceUrl)?.images.find(image=>image.id===sourceImage?.id);
+      const imageId=association?.status==='match'||association?.status==='review-pending'?associatedImageIds.get(point.normalizedHash):sourceImage?.id;
+      const restored=imageId===undefined?{ok:/** @type {const} */(true),value:undefined}:await restorePageImage.get(point.attribution.sourceUrl)?.(imageId)??{ok:/** @type {const} */(true),value:undefined};
+      if(!restored.ok)return restored;
+      const image=association?.image??restored.value??embeddedImagesByPage.get(point.attribution.sourceUrl)?.images.find(image=>image.id===sourceImage?.id);
       const sourceEvidence={url:captured.url,blocks:captured.blocks.filter(block=>point.evidenceAnchors.some(anchor=>anchor.blockId===block.id||anchor.selector===block.locator)),headings:captured.headings};
       if(!sourceEvidence.blocks.length)return {ok:false,error:{kind:'KnowledgeReviewEvidenceUnavailable'}};
       const reviewed=await reviewCapturedCandidate({run,point,sourceEvidence,sourceMode:'text',...(image===undefined?{}:{supportingImage:image})});
@@ -1405,9 +1422,13 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         associations.set(accepted.normalizedHash,{normalizedHash:accepted.normalizedHash,status:'match',image,binding:reviewed.value.binding});
       }
       return reviewed.ok?{ok:true,value:reviewed.value?.point??null,...(reviewed.value?.binding===undefined?{}:{binding:reviewed.value.binding})}:reviewed;
-    },(point,binding)=>{
-      const image=embeddedImagesByPage.get(point.attribution.sourceUrl)?.images.find(image=>image.id===binding.imageId);
-      if(image!==undefined)associations.set(point.normalizedHash,{normalizedHash:point.normalizedHash,status:'match',image,binding});
+    },async(point,binding)=>{
+      const restored=await restorePageImage.get(point.attribution.sourceUrl)?.(binding.imageId)??{ok:/** @type {const} */(true),value:undefined};
+      if(!restored.ok)return restored;
+      const image=restored.value??embeddedImagesByPage.get(point.attribution.sourceUrl)?.images.find(image=>image.id===binding.imageId);
+      if(image===undefined)return {ok:false,error:{kind:'KnowledgeReviewImageUnavailable'}};
+      associations.set(point.normalizedHash,{normalizedHash:point.normalizedHash,status:'match',image,binding});
+      return {ok:true,value:null};
     }), scratchpad: { load: (scope) => loadExtractionScratchpad(scope, run), save: (scratchpad) => content.saveScratchpad(scratchpad, dependencies.now()) }, knowledge: { append: async (point) => {
       const page=embeddedImagesByPage.get(point.attribution.sourceUrl);
       const association=associations.get(point.normalizedHash);

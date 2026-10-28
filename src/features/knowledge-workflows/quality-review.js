@@ -276,7 +276,7 @@ function retryableTechnicalReviewFailure(error) {
 /** @typedef {{readonly failureKind:'KnowledgeReviewOutputInvalid',readonly issues:readonly string[],readonly instructions:string}} KnowledgeReviewTechnicalFeedback */
 /** @typedef {{readonly failureKind:'KnowledgeRepairOutputInvalid',readonly issues:readonly string[],readonly instructions:string}} KnowledgeRepairTechnicalFeedback */
 
-/** @param {{technicalRetries?:boolean,logger?:(entry:{event:string,field:'review'|'repair',failureKind:string,count:number})=>void,evaluate:(point:KnowledgePoint,attempt:number,repairContext?:KnowledgeCriticRepairContext,technicalAttempt?:number,technicalRetryFeedback?:KnowledgeReviewTechnicalFeedback)=>Promise<Result<unknown>>,regenerate:(point:KnowledgePoint,verdict:ReviewVerdict,retrievalComparison:RetrievalComparison|null,technicalAttempt?:number,technicalRetryFeedback?:KnowledgeRepairTechnicalFeedback)=>Promise<Result<unknown>>,context:ReviewContext,sourceMode:'text'|'image',imagePurpose?:'illustration'|'evidence',sourceEvidence?:unknown,digest:(text:string)=>Promise<string>}} dependencies */
+/** @param {{technicalRetries?:boolean,logger?:(entry:{event:string,field:'review'|'repair',failureKind:string,count:number})=>void,evaluate:(point:KnowledgePoint,attempt:number,repairContext:KnowledgeCriticRepairContext|undefined,technicalAttempt:number,technicalRetryFeedback:KnowledgeReviewTechnicalFeedback|undefined,auditInput:ReviewAuditInput)=>Promise<Result<unknown>>,regenerate:(point:KnowledgePoint,verdict:ReviewVerdict,retrievalComparison:RetrievalComparison|null,technicalAttempt:number,technicalRetryFeedback:KnowledgeRepairTechnicalFeedback|undefined,auditInput:ReviewAuditInput)=>Promise<Result<unknown>>,context:ReviewContext,sourceMode:'text'|'image',imagePurpose?:'illustration'|'evidence',sourceEvidence?:unknown,digest:(text:string)=>Promise<string>}} dependencies */
 export function createKnowledgeQualityReviewer(dependencies) {
   return Object.freeze({
     /** @param {KnowledgePoint} original @returns {Promise<Result<{point:KnowledgePoint,verdict:ReviewVerdict}|null>>} */
@@ -293,7 +293,7 @@ export function createKnowledgeQualityReviewer(dependencies) {
         let technicalRetryFeedback;
         const auditInput=knowledgeReviewAuditInput(point,dependencies.context,dependencies.sourceEvidence);
         for(let technicalAttempt=1;technicalAttempt<=maximumTechnicalAttempts;technicalAttempt++) {
-          const reviewed=await dependencies.evaluate(point,attempt,repairContext,technicalAttempt,technicalRetryFeedback);
+          const reviewed=await dependencies.evaluate(point,attempt,repairContext,technicalAttempt,technicalRetryFeedback,auditInput);
           // Actor-managed calls make one provider attempt; technical failures never advance qualityAttempt.
           if(!reviewed.ok) {
             if(!retryableTechnicalReviewFailure(reviewed.error))return reviewed;
@@ -332,7 +332,7 @@ export function createKnowledgeQualityReviewer(dependencies) {
         /** @type {KnowledgeRepairTechnicalFeedback|undefined} */
         let repairTechnicalFeedback;
         for(let technicalAttempt=1;technicalAttempt<=maximumTechnicalAttempts;technicalAttempt++) {
-          const repaired=await dependencies.regenerate(point,verdict,assessment.retrievalComparison,technicalAttempt,repairTechnicalFeedback);
+          const repaired=await dependencies.regenerate(point,verdict,assessment.retrievalComparison,technicalAttempt,repairTechnicalFeedback,auditInput);
           if(!repaired.ok) {
             if(!retryableTechnicalReviewFailure(repaired.error))return repaired;
             if(technicalAttempt===maximumTechnicalAttempts)return {ok:false,error:{...repaired.error,attempts:technicalAttempt,technicalAttempts:technicalAttempt,technicalRetriesExhausted:true}};
