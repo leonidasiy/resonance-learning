@@ -249,7 +249,8 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
       current = await service.status({ ownerId, runId });
       if (!current.ok) throw new Error(current.error.kind);
       if (result.state !== current.value.state || result.run?.revision !== current.value.revision) result = { ...result, state: current.value.state, run: current.value };
-      if (result.state === "per-point-quiz-loop") {
+      // Release the invocation after every bounded chunk; native steps alone retain accumulated CPU work.
+      if (result.state === "extraction-loop" || result.state === "per-point-quiz-loop") {
         return continueFromCheckpoint(current.value);
       }
       if (isWorkflowRetryStage(result.state)) {

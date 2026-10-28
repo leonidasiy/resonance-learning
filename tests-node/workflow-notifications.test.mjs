@@ -1,3 +1,4 @@
+import {resolveModelApi} from '../worker/model-api.js';
 import { WEBPAGE_IMAGE_POLICY } from '../worker/webpage-image-budget.js';
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -215,15 +216,18 @@ test("actual workflow entry sends before retention/waits and preserves extractio
       "stale-completed",
       "cached-quiz-cpu",
       "checkpoint-extraction",
+      "checkpoint-backlog",
     ]
   ) {
     const replayedController = state === "stale-time-window" || state === "stale-completed" || state === "cached-quiz-cpu";
     let current = { ...run, state:replayedController?"per-point-quiz-loop":state==="empty-exhausted"?"robots-check":state==="cpu-exceeded"?"extraction-loop":state, revision:replayedController?59:run.revision, updatedAt: new Date().toISOString(), ...(replayedController?{counts:{pages:23,knowledgePoints:37,acceptedQuizzes:5,pendingQuizzes:0}}:state==="empty-exhausted"?{counts:{pages:0,knowledgePoints:0,acceptedQuizzes:0,pendingQuizzes:0}}:{}) };
     if(state==='checkpoint-extraction')current={...current,state:'awaiting-time-limit-decision',extractionDeadlineAt:new Date(Date.now()+60000).toISOString()};
-    let modelCalls = 0,restarts=0;
+    if(state==='checkpoint-backlog')current={...current,state:'extraction-loop'};
+    let modelCalls = 0,restarts=0,executorCalls=0;
     const actions = [];
     const noOp = () => ({});
     const bindings = {
+      resolveModelApi,
       WEBPAGE_IMAGE_POLICY,
       observeWorkflowDatabase:database=>database,
       WorkflowEntrypoint: class {},
@@ -275,6 +279,8 @@ test("actual workflow entry sends before retention/waits and preserves extractio
         },
       }),
       executeRetryingWorkflowStep: async dependencies => {
+        executorCalls++;
+        if(state==='checkpoint-backlog'){assert.equal(executorCalls,1,"A completed quiz checkpoint must release the invocation before further extraction");return {ok:true,value:{state:current.state,run:current}};}
         if(replayedController)return executeRetryingWorkflowStep(dependencies);
         if (state === "cpu-exceeded") throw new Error("Worker exceeded CPU time limit.");
         if(state==="empty-exhausted")return {ok:false,error:{kind:"WorkflowRobotsFailed",detailKind:"KnowledgeBrowserNavigationFailed"}};
@@ -344,7 +350,10 @@ test("actual workflow entry sends before retention/waits and preserves extractio
       if(result.continuation===true){restarts++;actions.push('checkpoint');result=await entry.run({instanceId:'instance',payload:{ownerId:'owner',runId:'run'}},step);}
       return result;
     };
-    if(state==='checkpoint-extraction'){
+    if(state==='checkpoint-backlog'){
+      const result=await entry.run({instanceId:'instance',payload:{ownerId:'owner',runId:'run'}},step);
+      assert.equal(result.state,'extraction-loop');assert.equal(result.continuation,true);assert.equal(executorCalls,1);assert.equal(restarts,0);assert.deepEqual(actions,[]);
+    }else if(state==='checkpoint-extraction'){
       const result=await entry.run({instanceId:'instance',payload:{ownerId:'owner',runId:'run'}},step);
       assert.equal(result.state,'extraction-loop');assert.equal(current.revision,3);assert.equal(result.continuation,true);assert.equal(restarts,0);assert.equal(modelCalls,0);assert.deepEqual(actions,[]);
     }else if(state==="stale-time-window" || state==="stale-completed") {
