@@ -16,8 +16,8 @@ const assessment=(current,decision,{mode='text',allowTextOnly=false,visible=fals
 };
 
 test('both prompts separate appearance and attribution from unpictured causal support',()=>{
- assert.match(knowledgeReviewerPrompt,/Prompt version: knowledge-quality-review-v40-source-language\./);
- assert.match(knowledgeRepairPrompt,/Prompt version: knowledge-quality-repair-v32-source-language\./);
+ assert.match(knowledgeReviewerPrompt,/Prompt version: knowledge-quality-review-v41-quoted-prior-evidence\./);
+ assert.match(knowledgeRepairPrompt,/Prompt version: knowledge-quality-repair-v33-readable-prior-evidence\./);
  assert.match(knowledgeReviewerPrompt,/Scene, object or color similarity/);
  assert.match(knowledgeReviewerPrompt,/Record supportsWholeClaim=false for relationships not depicted/);
  assert.match(knowledgeReviewerPrompt,/Preserve that text and remove the optional image/);

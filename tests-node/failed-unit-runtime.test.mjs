@@ -71,7 +71,7 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
       let output;
       if (body.response_format?.json_schema?.name === 'knowledge_batch_selection_v1') {
         output = { keptKnowledgeIds: task.points.map(point => point.id) };
-      } else if (body.response_format?.json_schema?.name === 'knowledge_quality_review_v12') {
+      } else if (body.response_format?.json_schema?.name === 'knowledge_quality_review_v13') {
         reviewedPages.push(task.knowledge.normalizedHash);
         output = syntheticAssessment(task, { decision: 'pass', reasons: ['Constructed supported fixture.'], feedback: 'Constructed acceptance.', matchedLessOftenIds: [], supportingImageEvidence: '', allowTextOnly: true });
         if (failureMode === 'review-output' && !approvedRetry && task.knowledge.normalizedHash === 'page-2') output.audit.version = 999;

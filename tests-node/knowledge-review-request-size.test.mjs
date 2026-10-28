@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createOpenRouterKnowledgeModel} from '../worker/knowledge-workflow-model.js';
-import {knowledgeReviewAuditInput,knowledgeReviewSchemaFor} from '../src/features/knowledge-workflows/quality-review.js';
+import {knowledgeReviewAuditInput,knowledgeReviewSchemaFor,knowledgeReviewHistoryInput,knowledgeReviewQuotedSchemaFor} from '../src/features/knowledge-workflows/quality-review.js';
 
 const point={summary:'A closed valve prevents flow.',evidenceAnchors:[{quote:'A closed valve prevents flow.',url:'https://example.test',selector:'main'}]};
 function fixture(count=47) {
@@ -96,4 +96,16 @@ test('other response schemas retain their exact transport contract',async()=>{
  const responseSchema={name:'synthetic',schema:{type:'object',properties:{valid:{type:'boolean'}},required:['valid'],additionalProperties:false}};
  const {body}=await request({input:{},responseSchema});
  assert.deepEqual(body.response_format.json_schema,{...responseSchema,strict:true});
+});
+
+test('fresh reviewer wire retains complete readable history and strict quoted citations',async()=>{
+ const context={lessOften:[],previousKnowledge:[{id:'prior',summary:'The original supported relationship.'}],previousQuizzes:[{prompt:'What is supported?',answer:'The original relationship.',explanation:'Complete retained explanation.'}]};
+ const audit=knowledgeReviewAuditInput(point,context,{}),input={knowledge:point,lessOften:context.lessOften,auditEvidence:knowledgeReviewHistoryInput(audit,context)};
+ const {body}=await request({input,responseSchema:knowledgeReviewQuotedSchemaFor(context,audit,[])});
+ const wire=JSON.parse(body.messages[1].content.slice('<task_input>\n'.length,-'\n</task_input>'.length));
+ assert.deepEqual(wire,input);assert.equal(wire.auditEvidence.previousContent[1].text,JSON.stringify(context.previousQuizzes[0]));
+ assert.equal(body.response_format.json_schema.name,'knowledge_quality_review_v13');
+ const citation=body.response_format.json_schema.schema.properties.audit.properties.finalClause.anyOf[0].properties.previousEvidence.items;
+ assert.deepEqual(citation.required,['priorId','quote']);assert.deepEqual(citation.properties.priorId.enum,['knowledge:prior','quiz:0']);
+ assert.equal(body.messages[0].content.includes('Required full local JSON schema'),false);
 });

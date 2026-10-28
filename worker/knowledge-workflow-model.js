@@ -29,7 +29,7 @@ function nonNegativeInteger(value) { return typeof value === "number" && Number.
 /** Factor only redundant conjunctions at the wire boundary; durable call identities retain the original schema.
  * @param {KnowledgeResponseSchema} definition @returns {KnowledgeResponseSchema} */
 function compactReviewSchema(definition) {
-  if (definition.name !== "knowledge_quality_review_v12") return definition;
+  if (!["knowledge_quality_review_v12","knowledge_quality_review_v13"].includes(definition.name)) return definition;
   const schema = structuredClone(definition.schema);
   /** @param {unknown} node */
   function visit(node) {
