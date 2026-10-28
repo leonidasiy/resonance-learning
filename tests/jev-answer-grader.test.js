@@ -147,3 +147,50 @@ Deno.test("Jev rejects provider redirects without following them or forwarding c
   if (!result.ok) assertEquals(result.error.kind, "JevProviderRejected");
   assertEquals(calls, 1);
 });
+
+Deno.test("Jev preserves native decision receipts and timing without logging answer state", async () => {
+  /** @type {Parameters<Parameters<typeof createJevAnswerGrader>[0]["logger"]>[0][]} */ const logs=[];
+  let time=10;
+  const grader=createJevAnswerGrader({...dependencies(async()=>{
+    time=35;
+    return Response.json({id:'gen-dec-fixture',model:'typesafe/jev-1.13',answers:{'blank-1':{type:'noul',noul:0.8}},usage:{input_tokens:492,output_tokens:38,cost:0.000020664}});
+  }),now:()=>time,logger:entry=>logs.push(entry)});
+  const result=await grader.grade(command());
+  assertEquals(result.ok,true);if(!result.ok)return;
+  assertEquals(result.value.requestId,'gen-dec-fixture');
+  assertEquals(result.value.inputTokens,492);assertEquals(result.value.outputTokens,38);
+  assertEquals(result.value.costNanodollars,20664);assertEquals(result.value.durationMs,25);
+  const usage=logs.find(entry=>entry.event==='knowledge-model-usage');
+  assertEquals(usage?.requestId,'gen-dec-fixture');assertEquals(usage?.costNanodollars,20664);
+  assertEquals(logs.some(entry=>entry.event==='jev-decision-duration'&&entry.durationMs===25),true);
+  assertEquals(JSON.stringify(logs).includes('home note'),false);
+});
+
+Deno.test("Jev leaves absent usage unknown and rejects malformed declared receipts", async () => {
+  for(const usage of [undefined,null,{input_tokens:null,output_tokens:null,cost:null},{input_tokens:-1},{output_tokens:'0'},{cost:-1},'invalid']) {
+    let calls=0;
+    const grader=createJevAnswerGrader(dependencies(async()=>{calls++;return Response.json({model:'typesafe/jev-1.13',answers:{'blank-1':{type:'noul',noul:0.8}},usage});}));
+    const result=await grader.grade(command());
+    const valid=usage===undefined||usage===null||typeof usage==='object'&&usage.input_tokens===null;
+    assertEquals(result.ok,valid);
+    if(result.ok){assertEquals(result.value.requestId,null);assertEquals(result.value.inputTokens,null);assertEquals(result.value.outputTokens,null);assertEquals(result.value.costNanodollars,null);}
+    else assertEquals(result.error.kind,'JevResponseInvalid');
+    assertEquals(calls,1);
+  }
+});
+
+Deno.test("Jev records failed dispatch duration without inventing a usage receipt", async () => {
+  /** @type {Parameters<Parameters<typeof createJevAnswerGrader>[0]["logger"]>[0][]} */ const logs=[];
+  let time=10;
+  const grader=createJevAnswerGrader({...dependencies(async()=>{time=17;return new Response(null,{status:429});}),now:()=>time,logger:entry=>logs.push(entry)});
+  const result=await grader.grade(command());assertEquals(result.ok,false);
+  assertEquals(logs.some(entry=>entry.event==='jev-decision-duration'&&entry.durationMs===7),true);
+  assertEquals(logs.some(entry=>entry.event==='knowledge-model-usage'),false);
+});
+
+Deno.test("compatible decision grading preserves its existing model receipt and cache accounting", async () => {
+  const grader=createJevAnswerGrader({...dependencies(async()=>Response.json({id:'chat-fixture',choices:[{finish_reason:'stop',message:{content:JSON.stringify({probabilities:{'blank-1':0.9}})}}],usage:{prompt_tokens:10,completion_tokens:2,cost:0.000003,prompt_tokens_details:{cached_tokens:4,cache_write_tokens:1}}})),chat:{endpoint:'https://models.example.test/v1/chat/completions',model:'configured-grader',apiStyle:'openai-compatible'}});
+  const result=await grader.grade(command());assertEquals(result.ok,true);if(!result.ok)return;
+  assertEquals(result.value.requestId,'chat-fixture');assertEquals(result.value.inputTokens,10);assertEquals(result.value.outputTokens,2);
+  assertEquals(result.value.costNanodollars,3000);assertEquals(result.value.cachedInputTokens,4);assertEquals(result.value.cacheWriteInputTokens,1);
+});

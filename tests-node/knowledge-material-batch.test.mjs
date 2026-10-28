@@ -47,6 +47,8 @@ test("production upload runtime resumes text batches and processes selected PDF 
     };
     const unwrap = (result) => { assert.equal(result.ok, true, JSON.stringify(result.error)); return result.value; };
     const metricLogs=[];
+    const imagePreflights=[];
+    const preflightModelWork=(role,identity)=>{imagePreflights.push({role,...identity});};
     const logger = entry => metricLogs.push(entry);
     const clock = () => new Date().toISOString();
     const ownerId = "batch-owner", runId = "batch-run", sourceId = "batch-source", sourceUrl = "https://example.test/lesson.pdf";
@@ -77,11 +79,12 @@ test("production upload runtime resumes text batches and processes selected PDF 
       assert(++modelCalls < 300, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
       const body = JSON.parse(init.body);
       if(String(_url).endsWith('/alpha/decisions')){
+        assert.equal(imagePreflights.filter(identity=>identity.runId===associationRunId&&identity.stageKey.startsWith('captured-image-score:')).length,decisionCalls+1,'Each score dispatch has its own durable preflight identity');
         decisionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id=?").get(associationRunId).n,2,'Association waits for all text points');
         assert.deepEqual(Object.keys(body.state.knowledge),['point_0','point_1']);assert.equal(body.model,'~typesafe/jev-latest');
         if(!decisionRefused){decisionRefused=true;return new Response('',{status:429});}
         const scores=/image:2|image2/.test(body.state.image.description)?[0.95,0.79]:[0.85,0.1];
-        return Response.json({model:'typesafe/jev-1.13',answers:{point_0:{type:'noul',noul:scores[0]},point_1:{type:'noul',noul:scores[1]}}});
+        return Response.json({id:`gen-dec-fixture-${decisionCalls}`,usage:{input_tokens:111,output_tokens:0,cost:0.000002},model:'typesafe/jev-1.13',answers:{point_0:{type:'noul',noul:scores[0]},point_1:{type:'noul',noul:scores[1]}}});
       }
       const message = body.messages[1].content;
       const envelope = Array.isArray(message) ? message[0].text : message;
@@ -110,6 +113,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       if (['extract-webpage-facts','normalize-webpage-claim-boundaries','audit-material-image-coverage','review-material-source'].includes(task.operation) || ['knowledge_batch_selection_v1','knowledge_quality_review_v13'].includes(body.response_format?.json_schema?.name) || (task.sections && task.operation !== 'observe-material-image' && task.operation !== 'plan-authorized-material' && task.operation !== 'replan-authorized-material')) assert(body.messages[0].content.includes(knowledgeUsefulnessInstruction), 'All production selection calls receive the shared usefulness policy');
       let output;
       if(body.response_format?.json_schema?.name==='captured_image_caption_v1'){
+        assert.equal(imagePreflights.filter(identity=>identity.runId===associationRunId&&identity.stageKey.startsWith('captured-image-caption:')).length,captionCalls+1,'Each caption dispatch has its own durable preflight identity');
         captionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id=?").get(associationRunId).n,2);assert(!task.knowledge,'Caption has no knowledge to force-fit');assert.equal(message[2].type,'image_url');output={description:`Fixture original ${task.imageId}`,visibleText:'Q K V'};if(captionCalls===1)output.extra='invalid';
       } else if(body.response_format?.json_schema?.name==='webpage_image_purpose_v1')output={purpose:'illustration',imageId:task.imageId,imageDigest:task.imageDigest,visibleEvidence:'Synthetic original figure context.'};
       else if (body.response_format?.json_schema?.name==='knowledge_batch_selection_v1') {
@@ -377,10 +381,14 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const captureOriginals=new Map();let captureIngests=0,captureRuntime;
     for(let step=0;step<8&&captureRun.state!=='completed';step++){
       if(captureRun.state==='awaiting-time-limit-decision')captureRun=unwrap(await captureService.advance({ownerId,runId:captureRunId,expectedRevision:captureRun.revision,nextState:'extraction-loop'}));
-      const runtime=captureRuntime=createKnowledgeWorkflowRuntime({imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:captureBytes})},media:{ingest:forbidden,ingestBytes:async command=>{captureIngests++;if(captureIngests<=3)return {ok:false,error:{kind:'MediaDerivativeProcessingFailed'}};assert.equal(command.candidate.kind,'image');assert.equal(command.sourceUrl,winner.url,'Highest qualifying image wins');assert.equal(command.binding.kind,'webpage-support');assert.equal(command.binding.purpose,'illustration');assert.equal(command.binding.imageId,winner.path);assert.deepEqual(command.bytes,winner.bytes);captureOriginals.set(command.knowledgeId,{id:winner.path,mediaType:'image/png',bytes:winner.bytes,purpose:'illustration'});return {ok:true,value:null};}},reviewMedia:{readOriginal:async scope=>({ok:true,value:captureOriginals.get(scope.knowledgeId)??null})},decodeImage,transition:({run:current,nextState,...rest})=>captureService.advance({ownerId,runId:captureRunId,expectedRevision:current.revision,nextState,...rest})});
+      const runtime=captureRuntime=createKnowledgeWorkflowRuntime({preflightModelWork,imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:captureBytes})},media:{ingest:forbidden,ingestBytes:async command=>{captureIngests++;if(captureIngests<=3)return {ok:false,error:{kind:'MediaDerivativeProcessingFailed'}};assert.equal(command.candidate.kind,'image');assert.equal(command.sourceUrl,winner.url,'Highest qualifying image wins');assert.equal(command.binding.kind,'webpage-support');assert.equal(command.binding.purpose,'illustration');assert.equal(command.binding.imageId,winner.path);assert.deepEqual(command.bytes,winner.bytes);captureOriginals.set(command.knowledgeId,{id:winner.path,mediaType:'image/png',bytes:winner.bytes,purpose:'illustration'});return {ok:true,value:null};}},reviewMedia:{readOriginal:async scope=>({ok:true,value:captureOriginals.get(scope.knowledgeId)??null})},decodeImage,transition:({run:current,nextState,...rest})=>captureService.advance({ownerId,runId:captureRunId,expectedRevision:current.revision,nextState,...rest})});
       unwrap(await runtime.execute(captureRun));captureRun=unwrap(await repository.findById(ownerId,captureRunId));
     }
     assert.equal(captureRun.state,'completed');assert.equal(captureRun.counts.acceptedQuizzes,2);assert.equal(captureIngests,4,JSON.stringify({captionCalls,decisionCalls,warnings:db.prepare('SELECT warnings_json FROM knowledge_workflow_page_image_warnings WHERE run_id=?').all(captureRunId)}));assert.equal(captionCalls,3,'One invalid caption gets a technical retry; successful captions replay');assert.equal(decisionCalls,3,'One 429 gets a technical retry; scores replay');
+    const scoreReceipts=db.prepare("SELECT result_json FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'captured-image-score:%' AND json_extract(result_json,'$.ok')=1").all(captureRunId).map(row=>JSON.parse(row.result_json).value);
+    assert.equal(scoreReceipts.length,2);assert(scoreReceipts.every(receipt=>receipt.requestId.startsWith('gen-dec-fixture-')&&receipt.inputTokens===111&&receipt.outputTokens===0&&receipt.costNanodollars===2000&&receipt.durationMs>=0));
+    assert(imagePreflights.filter(identity=>identity.runId===captureRunId&&identity.stageKey.startsWith('captured-image-')).every(identity=>identity.role==='rights-assessor'&&identity.inputDigest&&identity.createdAt));
+    assert(metricLogs.some(entry=>entry.event==='knowledge-model-usage'&&entry.runId===captureRunId&&entry.costNanodollars===2000&&entry.inputTokens===111));
     const capturePoints=db.prepare('SELECT point_json FROM extraction_knowledge_points WHERE run_id=? ORDER BY created_at,knowledge_id').all(captureRunId).map(row=>JSON.parse(row.point_json));
     assert.equal(capturePoints.filter(p=>p.mediaCandidates.length).length,1);assert.equal(capturePoints.find(p=>p.mediaCandidates.length).imageAssociation.score,0.95);assert.equal(capturePoints.find(p=>p.mediaCandidates.length).imageAssociation.model,'typesafe/jev-1.13');assert.deepEqual(capturePoints.find(p=>!p.mediaCandidates.length).mediaCandidates,[]);assert.deepEqual(capturePoints.map(p=>p.summary).sort(),captureMaterial.sections.map(s=>s.text).sort(),'Images cannot rewrite text-derived knowledge');
     // Replaying a changed knowledge set must rescore every image without captioning the same pixels again.

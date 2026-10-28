@@ -1466,7 +1466,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       }
       /** @type {string[]} */const warnings=[];
       /** @type {import('./url-capture-association.js').ImageScores[]} */const scores=[];
-      const decision=createJevDecisionModel({...(dependencies.gradingModel===undefined?{}:{chat:{endpoint:dependencies.endpoint,model:dependencies.gradingModel,apiStyle:dependencies.apiStyle??"openrouter"}}),apiKey:dependencies.apiKey,configuration:{...JEV_GRADER_CONFIGURATION,acceptanceThreshold:0.8},fetch:dependencies.fetch,timeoutMs:10_000,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})});
+      const decision=createJevDecisionModel({...(dependencies.gradingModel===undefined?{}:{chat:{endpoint:dependencies.endpoint,model:dependencies.gradingModel,apiStyle:dependencies.apiStyle??"openrouter"}}),apiKey:dependencies.apiKey,configuration:{...JEV_GRADER_CONFIGURATION,acceptanceThreshold:0.8},now:dependencies.nowMs,fetch:dependencies.fetch,timeoutMs:10_000,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})});
       /** @template T @param {(attempt:number)=>Promise<Result<T,{kind:string}>>} work @returns {Promise<Result<T,{kind:string}>>} */
       async function retry(work){
         for(let attempt=1;;attempt++){
@@ -1482,15 +1482,20 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           const config=dependencies.configSnapshots['rights-assessor'],baseProtocol=dependencies.modelProtocols?.['rights-assessor'];
           const command={role:/** @type {const} */('source-assessor'),reasoningEffort:/** @type {const} */('low'),systemPrompt:capturedImageCaptionPrompt,input:{operation:'caption-captured-image',imageId:image.path,sourceCaption:image.caption,alt:image.alt,context:image.context},maxOutputTokens:2048,attachments:[{id:image.path,mediaType:/** @type {'image/png'|'image/jpeg'|'image/webp'|'image/gif'} */(image.mediaType),bytes:image.bytes}],responseSchema:capturedImageCaptionSchema};
           const digest=await imageHash(new TextEncoder().encode(JSON.stringify({...command,attachments:[{id:image.path,mediaType:image.mediaType,digest:await imageHash(image.bytes)}],config:config.digest,protocol:baseProtocol,endpoint:dependencies.endpoint,apiStyle:dependencies.apiStyle??'openrouter'})));
-          const result=await stages.run(run,`captured-image-caption:${digest}:${attempt}`,digest,async identity=>{
+          const result=await stages.run(run,`captured-image-caption:${digest}:${attempt}`,digest,async identity=>withModelSlot(async()=>{
+            const active=await checkProcessingState(run);if(!active.ok)return active;
             dependencies.preflightModelWork?.('rights-assessor',{ownerId:run.ownerId,runId:run.runId,stageKey:identity.key,inputDigest:identity.inputDigest,createdAt:identity.createdAt});
             return createSourceDecisionModel({apiStyle:dependencies.apiStyle,configuration:config,apiKey:dependencies.apiKey,endpoint:dependencies.endpoint,protocol:baseProtocol,maximumInputCharacters:3_000_000,fetch:dependencies.fetch,now:dependencies.nowMs,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})}).generate(command);
-          },{modelCall:true,maximumProviderAttempts:1,cacheProviderRefusals:true});
+          }),{modelCall:true,maximumProviderAttempts:1,cacheProviderRefusals:true});
           return result.ok?(isCapturedImageCaption(result.value.output)?{ok:true,value:result.value.output}:{ok:false,error:{kind:'CapturedImageCaptionInvalid'}}):result;
         });
         if(!caption.ok){if(/WorkflowProcessingStopped|Persistence|Ledger|Accounting|Budget|Credential|Authorization/u.test(caption.error.kind))return caption;warnings.push(`Image warning (${image.path}, ${image.url}): ${caption.error.kind}. Text retained.`);continue;}
         const input=capturedImageDecision(image,caption.value,points),inputDigest=await imageHash(new TextEncoder().encode(JSON.stringify(input)));
-        const scored=await retry(attempt=>stages.run(run,`captured-image-score:${image.path}:${inputDigest}:${attempt}`,inputDigest,()=>decision.decide(input),{modelCall:true}));
+        const scored=await retry(attempt=>stages.run(run,`captured-image-score:${image.path}:${inputDigest}:${attempt}`,inputDigest,identity=>withModelSlot(async()=>{
+          const active=await checkProcessingState(run);if(!active.ok)return active;
+          dependencies.preflightModelWork?.('rights-assessor',{ownerId:run.ownerId,runId:run.runId,stageKey:identity.key,inputDigest:identity.inputDigest,createdAt:identity.createdAt});
+          return decision.decide(input);
+        }),{modelCall:true}));
         if(!scored.ok){if(/WorkflowProcessingStopped|Persistence|Ledger|Accounting|Budget|Credential|Authorization/u.test(scored.error.kind))return scored;warnings.push(`Image warning (${image.path}, ${image.url}): ${scored.error.kind}. Text retained.`);continue;}
         scores.push({image,caption:caption.value,probabilities:scored.value.probabilities,model:scored.value.model});
       }

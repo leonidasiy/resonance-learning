@@ -6,6 +6,9 @@ import {createOpenRouterKnowledgeModel} from "./knowledge-workflow-model.js";
 /** @typedef {{ readonly prompt: string, readonly answers: readonly JevAnswer[] }} JevGradeCommand */
 /** @typedef {{ readonly kind: "JevCommandInvalid" | "JevCredentialMissing" | "JevTimeout" | "JevRateLimited" | "JevProviderUnavailable" | "JevProviderRejected" | "JevResponseInvalid" }} JevFailure */
 
+/** @typedef {Pick<import("./knowledge-workflow-model.js").KnowledgeModelResult,"requestId"|"inputTokens"|"outputTokens"|"costNanodollars"|"durationMs"|"cachedInputTokens"|"cacheWriteInputTokens">} JevReceipt */
+/** @typedef {{readonly model:string,readonly probabilities:readonly number[]} & JevReceipt} JevDecision */
+/** @typedef {{event:string,failureKind?:JevFailure["kind"],requestId?:string,inputTokens?:number|null,outputTokens?:number|null,costNanodollars?:number|null,durationMs?:number}} JevLog */
 /** @typedef {{ readonly requestedModel: string, readonly servedModel: string | null, readonly endpoint: string, readonly acceptanceThreshold: number, readonly evidence: string }} JevGraderConfiguration */
 /** @type {JevGraderConfiguration} */
 export const JEV_GRADER_CONFIGURATION = Object.freeze({
@@ -128,14 +131,14 @@ function hasDuplicateJsonKeys(source) {
 /**
  * Create a bounded OpenRouter Decisions API adapter. It returns only typed
  * outcomes and never includes request/response content in logs.
- * @param {{ readonly chat?: {readonly endpoint:string,readonly model:string,readonly apiStyle:"openrouter"|"openai-compatible"}, readonly apiKey: string | null, readonly configuration: JevGraderConfiguration, readonly fetch: typeof fetch, readonly timeoutMs: number, readonly logger: (entry: { readonly event: string, readonly failureKind?: JevFailure["kind"] }) => void }} dependencies
+ * @param {{ readonly now?:()=>number, readonly chat?: {readonly endpoint:string,readonly model:string,readonly apiStyle:"openrouter"|"openai-compatible"}, readonly apiKey: string | null, readonly configuration: JevGraderConfiguration, readonly fetch: typeof fetch, readonly timeoutMs: number, readonly logger: (entry: JevLog) => void }} dependencies
  */
 export function createJevAnswerGrader(dependencies) {
   if ((dependencies?.apiKey !== null && typeof dependencies?.apiKey !== "string") || !validConfiguration(dependencies?.configuration) || typeof dependencies?.fetch !== "function" || !Number.isSafeInteger(dependencies?.timeoutMs) || dependencies.timeoutMs < 1 || typeof dependencies?.logger !== "function") throw new TypeError("Jev grader dependencies are invalid.");
   const { apiKey, fetch: request, timeoutMs, logger } = dependencies;
   const configuration = Object.freeze({ ...dependencies.configuration });
   return Object.freeze({
-    /** @param {unknown} input @returns {Promise<Result<{ readonly accepted: readonly boolean[], readonly probabilities: readonly number[], readonly model: string }, JevFailure>>} */
+    /** @param {unknown} input @returns {Promise<Result<JevDecision & { readonly accepted: readonly boolean[] }, JevFailure>>} */
     async grade(input) {
       if (!validCommand(input)) return failure(logger, "JevCommandInvalid");
       if (apiKey === null || apiKey.trim() === "") return failure(logger, "JevCredentialMissing");
@@ -158,15 +161,16 @@ function failure(logger, kind) { logger({ event: "jev-answer-grading-failure", f
 /** Typed probabilistic decisions shared by answer grading and captured-image association.
  * @param {Parameters<typeof createJevAnswerGrader>[0]} dependencies */
 export function createJevDecisionModel(dependencies) {
-  if (!validConfiguration(dependencies?.configuration) || typeof dependencies.fetch !== "function" || !Number.isSafeInteger(dependencies.timeoutMs) || dependencies.timeoutMs < 1) throw new TypeError("Jev decision dependencies are invalid.");
+  if ((dependencies?.now!==undefined&&typeof dependencies.now!=="function") || !validConfiguration(dependencies?.configuration) || typeof dependencies.fetch !== "function" || !Number.isSafeInteger(dependencies.timeoutMs) || dependencies.timeoutMs < 1) throw new TypeError("Jev decision dependencies are invalid.");
   const { apiKey, fetch: request, timeoutMs, logger, configuration } = dependencies;
+  const now=dependencies.now??Date.now;
   const chatConfiguration = dependencies.chat;
   const chat = chatConfiguration === undefined ? null : createOpenRouterKnowledgeModel({
-    ...chatConfiguration, apiKey, fetch:request, timeoutMs, maximumInputCharacters:100_000, now:Date.now,
-    logger:entry=>logger({event:entry.event}),
+    ...chatConfiguration, apiKey, fetch:request, timeoutMs, maximumInputCharacters:100_000, now,
+    logger:entry=>logger({...entry,failureKind:undefined}),
   });
   return Object.freeze({
-    /** @param {{state:unknown,questions:Record<string,{type:'noul',instructions:string,criteria:{true:string,false:string}}>}} input @returns {Promise<Result<{readonly model:string,readonly probabilities:readonly number[]},JevFailure>>} */
+    /** @param {{state:unknown,questions:Record<string,{type:'noul',instructions:string,criteria:{true:string,false:string}}>}} input @returns {Promise<Result<JevDecision,JevFailure>>} */
     async decide({state,questions}) {
       if(!record(questions)||!Object.keys(questions).length||!Object.entries(questions).every(([id,q])=>/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(id)&&record(q)&&q.type==='noul'&&text(q.instructions)&&record(q.criteria)&&text(q.criteria.true)&&text(q.criteria.false))) return failure(logger,'JevCommandInvalid');
       if(apiKey===null||apiKey.trim()==='')return failure(logger,'JevCredentialMissing');
@@ -182,11 +186,14 @@ export function createJevDecisionModel(dependencies) {
         const values = result.value.output.probabilities;
         if (!record(values) || Object.keys(result.value.output).length !== 1 || Object.keys(values).length !== ids.length || !ids.every(id=>typeof values[id] === 'number' && Number.isFinite(values[id]) && values[id] >= 0 && values[id] <= 1)) return failure(logger,'JevResponseInvalid');
         logger({event:'jev-answer-grading-success'});
-        return {ok:true,value:{model:chatConfiguration.model,probabilities:ids.map(id=>/** @type {number} */(values[id]))}};
+        const {output,reasoningTrace,...receipt}=result.value;
+        return {ok:true,value:{model:chatConfiguration.model,probabilities:ids.map(id=>/** @type {number} */(values[id])),...receipt}};
       }
+      const startedAt=now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let document;
+      let durationMs=0;
       try {
         // Workers support manual redirects; the status check below rejects them.
         const response = await request(configuration.endpoint, { method: "POST", redirect: "manual", headers: { accept: "application/json", "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model: configuration.requestedModel, state, questions }), signal: controller.signal });
@@ -203,11 +210,29 @@ export function createJevDecisionModel(dependencies) {
         if (controller.signal.aborted) return failure(logger, "JevTimeout");
         if (error instanceof TypeError) return failure(logger, "JevProviderUnavailable");
         throw error;
-      } finally { clearTimeout(timer); }
+      } finally {
+        clearTimeout(timer);
+        durationMs=now()-startedAt;
+        if(!Number.isFinite(durationMs)||durationMs<0)throw new TypeError('Jev decision duration is invalid.');
+        logger({event:'jev-decision-duration',durationMs});
+      }
+      const usage=record(document)&&record(document.usage)?document.usage:{};
+      const cost=typeof usage.cost==='number'&&Number.isFinite(usage.cost)&&usage.cost>=0?Math.round(usage.cost*1_000_000_000):null;
+      const receipt={requestId:record(document)&&text(document.id)?document.id:null,inputTokens:tokenCount(usage.input_tokens),outputTokens:tokenCount(usage.output_tokens),costNanodollars:cost!==null&&Number.isSafeInteger(cost)?cost:null,durationMs,cachedInputTokens:null,cacheWriteInputTokens:null};
+      logger({event:'knowledge-model-usage',...(receipt.requestId===null?{}:{requestId:receipt.requestId}),inputTokens:receipt.inputTokens,outputTokens:receipt.outputTokens,costNanodollars:receipt.costNanodollars});
+      if(record(document)&&(
+        document.usage!==undefined&&document.usage!==null&&!record(document.usage)||
+        ['input_tokens','output_tokens'].some(field=>usage[field]!==undefined&&usage[field]!==null&&tokenCount(usage[field])===null)||
+        usage.cost!==undefined&&usage.cost!==null&&receipt.costNanodollars===null
+      ))return failure(logger,'JevResponseInvalid');
       const decision = parseDecision(document, Object.keys(questions), configuration.servedModel);
       if (decision === null) return failure(logger, "JevResponseInvalid");
       logger({ event: "jev-answer-grading-success" });
-      return {ok:true,value:decision};
+      return {ok:true,value:Object.freeze({...decision,...receipt})};
     },
   });
 }
+
+/** Validate provider counters without fabricating zeroes for missing values.
+ * @param {unknown} value @returns {number|null} */
+function tokenCount(value){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:null;}
