@@ -100,3 +100,15 @@ Deno.test("CPU retries pass distinct bounded execution numbers without changing 
  }});
  assertEquals(result.ok,true);assertEquals(attempts.join(","),"1,2,3,4");
 });
+
+Deno.test("only an observed CPU failure enables reduced work on subsequent attempts",async()=>{
+ for(const cpu of [true,false]){
+  /** @type {boolean[]} */ const flags=[];
+  const result=await executeRetryingWorkflowStep({step:{do:async(_name,_config,callback)=>callback(),sleepUntil:async()=>{}},name:"cpu-pressure",now:()=>0,load:async()=>({ok:true,value:null}),execute:async(_run,_attempt,limited)=>{
+   flags.push(limited===true);
+   if(flags.length===1){if(cpu)throw new Error("Worker exceeded CPU time limit.");return {ok:false,error:{kind:"KnowledgeBrowserTimedOut"}};}
+   return {ok:true,value:null};
+  }});
+  assertEquals(result.ok,true);assertEquals(flags.join(","),cpu?"false,true":"false,false");
+ }
+});

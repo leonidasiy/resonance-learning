@@ -170,8 +170,8 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
     if (!current.ok) throw new Error(current.error.kind);
     const configurations = await step.do("validate workflow role configurations", async () => loadConfigurationSnapshots(current.value.configDigests, sources));
     if (!configurations.ok) throw new Error(configurations.error.kind);
-    const createRuntime = (executionAttempt = 1) => createKnowledgeWorkflowRuntime({
-      executionAttempt,
+    const createRuntime = (executionAttempt = 1,cpuLimited = false) => createKnowledgeWorkflowRuntime({
+      executionAttempt,cpuLimited,
       imagePolicy:WEBPAGE_IMAGE_POLICY,
       database,
       fetch: workerFetch,
@@ -221,7 +221,7 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
         name: stepName,
         now: Date.now,
         load: () => service.status({ ownerId, runId }),
-        execute: (authoritativeRun,executionAttempt)=>createRuntime(executionAttempt).execute(authoritativeRun),
+        execute: (authoritativeRun,executionAttempt,cpuLimited)=>createRuntime(executionAttempt,cpuLimited).execute(authoritativeRun),
       });
       } catch (error) {
         if (!(error instanceof Error)) throw error;
