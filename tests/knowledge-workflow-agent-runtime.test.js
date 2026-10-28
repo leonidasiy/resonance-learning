@@ -235,7 +235,7 @@ Deno.test("agent runtime accepts configured request windows above 90 seconds and
 });
 
 Deno.test("agent private working usage retains request receipts, actual cost and cache observations", async () => {
-  for(const observations of [{costNanodollars:0,cachedInputTokens:0,cacheWriteInputTokens:0},{costNanodollars:123456,cachedInputTokens:321,cacheWriteInputTokens:12},{}]){
+  for(const observations of [{durationMs:0,costNanodollars:0,cachedInputTokens:0,cacheWriteInputTokens:0},{durationMs:1250,costNanodollars:123456,cachedInputTokens:321,cacheWriteInputTokens:12},{}]){
     const store=memory(),snapshots=await configurationSnapshots();
     const runtime=createKnowledgeWorkflowAgentRuntime({model:{generate:async()=>({ok:true,value:{output:{answer:"ok"},requestId:"cache-receipt",inputTokens:400,outputTokens:10,reasoningTrace:null,...observations}})},memory:store,eventLedger:{append:async()=>null},compactor:createContextCompactor({now:()=>"2026-10-28T00:00:00Z",digest:value=>`digest:${value.length}`,appendRecord:async()=>null,logger:()=>{}}),configSnapshots:snapshots,now:()=>"2026-10-28T00:00:00Z",logger:()=>{}});
     const scope={ownerId:"owner-cache",runId:"run-cache",role:/** @type {const} */("question-evaluator")};
@@ -246,8 +246,8 @@ Deno.test("agent private working usage retains request receipts, actual cost and
     const entry=records.value.find(entry=>entry.id.startsWith("working:"));
     if(entry===undefined)throw new Error("Missing private working usage.");
     assertEquals(entry.visibility,"private");
-    const payload=/** @type {{usage:{requestId:string,inputTokens:number,outputTokens:number,costNanodollars:number|null,cachedInputTokens:number|null,cacheWriteInputTokens:number|null}}} */(entry.payload);
+    const payload=/** @type {{usage:{requestId:string,inputTokens:number,outputTokens:number,durationMs:number|null,costNanodollars:number|null,cachedInputTokens:number|null,cacheWriteInputTokens:number|null}}} */(entry.payload);
     assertEquals(payload.usage.requestId,"cache-receipt");assertEquals(payload.usage.inputTokens,400);assertEquals(payload.usage.outputTokens,10);
-    for(const key of /** @type {const} */(["costNanodollars","cachedInputTokens","cacheWriteInputTokens"]))assertEquals(payload.usage[key],observations[key]??null);
+    for(const key of /** @type {const} */(["durationMs","costNanodollars","cachedInputTokens","cacheWriteInputTokens"]))assertEquals(payload.usage[key],observations[key]??null);
   }
 });

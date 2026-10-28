@@ -249,7 +249,7 @@ export function createKnowledgeWorkflowAgentRuntime(dependencies) {
       const modelInput = Object.freeze({ contract: contextContract, memory: priorCompacted.value.context.recentTurns, task: command.input });
       if (estimatedTokens(modelInput) + estimatedTokens(command.systemPrompt) + command.maxOutputTokens > 1_048_576) return { ok: false, error: { kind: "ContextLimitBeforeSafeCheckpoint" } };
       releasePreparation();
-      /** @type {Pick<KnowledgeModelResult,"requestId"|"inputTokens"|"outputTokens"|"costNanodollars"|"cachedInputTokens"|"cacheWriteInputTokens"> | null} */
+      /** @type {Pick<KnowledgeModelResult,"requestId"|"inputTokens"|"outputTokens"|"durationMs"|"costNanodollars"|"cachedInputTokens"|"cacheWriteInputTokens"> | null} */
       let usage = null;
       const executionId = nextExecutionId("model");
       const executionTaskId = `${command.taskId}:attempt:${executionId}`;
@@ -259,7 +259,7 @@ export function createKnowledgeWorkflowAgentRuntime(dependencies) {
           respond: async () => {
             const generated = await generateModel({ role: command.role, ...(command.phase===undefined?{}:{phase:command.phase}), systemPrompt: command.systemPrompt, input: modelInput, maxOutputTokens: command.maxOutputTokens, timeoutMs: Math.min(command.timeoutMs ?? contract.limits.timeoutMs, contract.limits.timeoutMs),signal:command.signal, ...(command.attachments === undefined ? {} : { attachments: command.attachments }), ...(command.responseSchema === undefined ? {} : { responseSchema: command.responseSchema }), ...(command.reasoningEffort === undefined ? {} : { reasoningEffort: command.reasoningEffort }), ...(command.providerSort === undefined ? {} : { providerSort: command.providerSort }) });
             if (!generated.ok) return { type: "final", reasoningTrace: null, output: { __knowledgeWorkflowAgentFailure: generated.error.kind, ...("field" in generated.error ? { __knowledgeWorkflowAgentFailureField: generated.error.field } : {}), ...(generated.error.status === undefined ? {} : { __knowledgeWorkflowAgentFailureStatus: generated.error.status }), ...(generated.error.retryAfterMs===undefined?{}:{__knowledgeWorkflowAgentFailureRetryAfterMs:generated.error.retryAfterMs}), ...(generated.error.finishReason === "error" ? { __knowledgeWorkflowAgentFailureFinishReason: "error" } : {}) } };
-            usage = { requestId: generated.value.requestId, inputTokens: generated.value.inputTokens, outputTokens: generated.value.outputTokens, costNanodollars: generated.value.costNanodollars ?? null, cachedInputTokens: generated.value.cachedInputTokens ?? null, cacheWriteInputTokens: generated.value.cacheWriteInputTokens ?? null };
+            usage = { requestId: generated.value.requestId, inputTokens: generated.value.inputTokens, outputTokens: generated.value.outputTokens, durationMs: generated.value.durationMs ?? null, costNanodollars: generated.value.costNanodollars ?? null, cachedInputTokens: generated.value.cachedInputTokens ?? null, cacheWriteInputTokens: generated.value.cacheWriteInputTokens ?? null };
             return { type: "final", reasoningTrace: generated.value.reasoningTrace, output: generated.value.output };
           },
         },

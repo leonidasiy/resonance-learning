@@ -288,6 +288,15 @@ Deno.test("model retains reported cache and cost observations without inventing 
   }
 });
 
+Deno.test("model retains the measured operation duration alongside provider usage", async () => {
+  let clock=1000;
+  const model=createOpenRouterKnowledgeModel({apiKey:"synthetic",endpoint:"https://api.example.test/chat/completions",model:"synthetic",timeoutMs:1000,maximumInputCharacters:10000,now:()=>clock,logger:()=>{},fetch:async()=>{clock+=25;return Response.json({id:"timed-receipt",choices:[{finish_reason:"stop",message:{content:"{}"}}],usage:{prompt_tokens:3,completion_tokens:2}});}});
+  const result=await model.generate(command());
+  if(!result.ok)throw new Error(result.error.kind);
+  assertEquals(result.value.durationMs,25);
+  assertEquals(result.value.inputTokens,3);
+});
+
 Deno.test("model rejects malformed reported cache counters and unsafe costs with field context", async () => {
   const cases=[
     {usage:{cost:-1},field:"usage.cost"},{usage:{cost:"0.1"},field:"usage.cost"},{usage:{cost:1e100},field:"usage.cost"},
