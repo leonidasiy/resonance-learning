@@ -6,11 +6,11 @@ import { extractPdfEmbeddedImagesWithLibrary } from '../src/features/knowledge-w
 import { imageSignature } from '../src/features/knowledge-workflows/image-upload.js';
 
 const origin='https://material.invalid';
-const maximumImageBytes=20*1024*1024, maximumTotalBytes=100*1024*1024, chunkBytes=48*1024;
+const maximumImageBytes=20*1024*1024, maximumTotalBytes=100*1024*1024, chunkBytes=512*1024;
 /** @param {string} kind */
 const fail=kind=>({ok:/** @type {const} */(false),error:{kind}});
 /** @typedef {import('../src/features/knowledge-workflows/url-capture.js').CapturedImage} CapturedImage */
-/** @param {{binding:import('@cloudflare/puppeteer').BrowserWorker,capacity:Pick<import('./browser-run-capacity-d1.js').D1BrowserRunCapacityLedger,'reserve'|'reconcile'>,assets:{fetch:(request:Request)=>Promise<Response>},now:()=>number,logger:(entry:{event:string,ownerId:string,failureKind?:string})=>void,launcher?:Pick<typeof puppeteer,'launch'>}} dependencies */
+/** @param {{binding:import('@cloudflare/puppeteer').BrowserWorker,capacity:Pick<import('./browser-run-capacity-d1.js').D1BrowserRunCapacityLedger,'reserve'|'reconcile'>,assets:{fetch:(request:Request)=>Promise<Response>},now:()=>number,logger:(entry:{event:string,ownerId:string,failureKind?:string,stage?:string,durationMs?:number,count?:number,itemCount?:number})=>void,launcher?:Pick<typeof puppeteer,'launch'>}} dependencies */
 export function createBrowserMaterialImageExtractor({binding,capacity,assets,now,logger,launcher=puppeteer}) {
   /** @param {import('../src/features/knowledge-workflows/material.js').AuthorizedMaterial} material @param {Uint8Array} bytes
    * @returns {Promise<{ok:true,value:readonly CapturedImage[]}|{ok:false,error:{kind:string}}>} */
@@ -28,10 +28,16 @@ export function createBrowserMaterialImageExtractor({binding,capacity,assets,now
     if(!reserved.ok)return reserved;
     const started=now(),deadline=started+reserved.value.reservedMilliseconds;
     let browser,timer,closeFailed=false,timedOut=false;
+    let stage='launch',phaseStarted=started,imageCount=0,chunkCount=0;
+    const timeoutKind=()=>`MaterialImageBrowser${stage==='launch'?'Launch':stage==='decode'?'Decode':'Transfer'}TimedOut`;
+    const logPhase=()=>logger({event:'material-image-browser-phase',ownerId:material.ownerId,stage,durationMs:Math.max(0,now()-phaseStarted),count:imageCount,itemCount:chunkCount});
+    /** @param {string} next */
+    const nextPhase=next=>{logPhase();stage=next;phaseStarted=now();};
     /** @type {import('@cloudflare/puppeteer').JSHandle|undefined} */let handle;
     /** @type {{ok:true,value:readonly CapturedImage[]}|{ok:false,error:{kind:string}}} */let result=fail('MaterialImageBrowserExtractionFailed');
     try {
       browser=await launcher.launch(binding,{keep_alive:reserved.value.reservedMilliseconds});
+      nextPhase('decode');
       const session=browser;
       timer=setTimeout(()=>{timedOut=true;void session.close().catch(()=>{closeFailed=true;});},Math.max(1,deadline-now()));
       const page=await browser.newPage();
@@ -55,6 +61,7 @@ export function createBrowserMaterialImageExtractor({binding,capacity,assets,now
       await page.goto(`${origin}/`,{waitUntil:'load',timeout:Math.max(1,deadline-now())});
       // CDP evaluates the shared function directly; document content is never executable code.
       handle=await page.evaluateHandle(`(async()=>{const pdfjs=await import('${origin}/pdfjs.mjs');const bytes=new Uint8Array(await(await fetch('${origin}/original')).arrayBuffer());return (${extractPdfEmbeddedImagesWithLibrary.toString()})(bytes,pdfjs);})()`);
+      if(timedOut||now()>=deadline)throw new Error('MaterialImageTimedOut');
       const metadata=await handle.evaluate(result=>result.ok?{ok:true,value:result.value.map((/** @type {import('../src/features/knowledge-workflows/material.js').MaterialMedia} */ {bytes,...image})=>({...image,length:bytes.length}))}:result);
       if(!metadata||typeof metadata!=='object'||typeof metadata.ok!=='boolean')throw new TypeError('MaterialImageInvalid');
       if(!metadata.ok){
@@ -62,6 +69,7 @@ export function createBrowserMaterialImageExtractor({binding,capacity,assets,now
         result=fail(metadata.error.kind);
       }else {
         if(!Array.isArray(metadata.value))throw new TypeError('MaterialImageInvalid');
+        nextPhase('transfer');
         /** @type {CapturedImage[]} */const images=[];
         let total=0;
         for(const [index,image] of metadata.value.entries()){
@@ -70,7 +78,7 @@ export function createBrowserMaterialImageExtractor({binding,capacity,assets,now
           total+=image.length;
           const output=new Uint8Array(image.length);
           for(let offset=0;offset<image.length;offset+=chunkBytes){
-            if(now()>=deadline)throw new Error('MaterialImageTimedOut');
+            if(timedOut||now()>=deadline)throw new Error('MaterialImageTimedOut');
             const length=Math.min(chunkBytes,image.length-offset);
             const encoded=await handle.evaluate((result,index,offset,length)=>{
               const bytes=result.value[index].bytes.subarray(offset,offset+length);
@@ -81,15 +89,18 @@ export function createBrowserMaterialImageExtractor({binding,capacity,assets,now
             const decoded=/** @type {Uint8Array} */(/** @type {unknown} */(Buffer.from(encoded,'base64')));
             if(decoded.length!==length)throw new TypeError('MaterialImageInvalid');
             output.set(decoded,offset);
+            chunkCount++;
           }
           if(imageSignature(output)!=='image/png')throw new TypeError('MaterialImageInvalid');
           const url=new URL(material.sourceUrl);url.hash=image.path;
           images.push({path:image.path,mediaType:'image/png',context:image.context,bytes:output,url:url.href,caption:'',alt:''});
+          imageCount++;
         }
-        result=timedOut||now()>=deadline?fail('MaterialImageBrowserTimedOut'):{ok:true,value:images};
+        result=timedOut||now()>=deadline?fail(timeoutKind()):{ok:true,value:images};
       }
-    }catch(error){result=fail(timedOut||now()>=deadline?'MaterialImageBrowserTimedOut':error instanceof TypeError&&error.message==='MaterialImageInvalid'?'MaterialImageBrowserResultInvalid':'MaterialImageBrowserExtractionFailed');}
+    }catch(error){result=fail(timedOut||now()>=deadline?timeoutKind():error instanceof TypeError&&error.message==='MaterialImageInvalid'?'MaterialImageBrowserResultInvalid':'MaterialImageBrowserExtractionFailed');}
     finally {
+      logPhase();
       // Release remote pixels before closing the session; browser close also covers failed disposal.
       if(handle)try{await handle.dispose();}catch{result=fail('MaterialImageBrowserCleanupFailed');}
       clearTimeout(timer);

@@ -25,9 +25,9 @@ async function fixture(options={}){
   const calls={requests:[],cdp:[],reconciled:[],closed:0,disposed:0,launches:0,logs:[],chunks:[],assets:[]};
   let paused;
   const client={on(event,callback){assert.equal(event,'Fetch.requestPaused');paused=callback;},async send(method,args){calls.cdp.push({method,args});}};
-  const handle={async evaluate(fn,...args){if(args.length)calls.chunks.push(args);return options.metadata!==undefined&&!args.length?options.metadata:fn(remote,...args);},async dispose(){calls.disposed++;if(options.disposeFail)throw Error('dispose');}};
+  const handle={async evaluate(fn,...args){if(args.length&&options.delayedTransfer)await new Promise(resolve=>setTimeout(resolve,10));if(args.length)calls.chunks.push(args);return options.metadata!==undefined&&!args.length?options.metadata:fn(remote,...args);},async dispose(){calls.disposed++;if(options.disposeFail)throw Error('dispose');}};
   const page={async createCDPSession(){return client;},on(){},async goto(url){calls.requests.push(url);await paused({requestId:'root',request:{url,method:'GET'}});for(const [id,target,method]of [['pdf','https://material.invalid/original','GET'],['lib','https://material.invalid/pdfjs.mjs','GET'],['outside','https://evil.example/steal','GET'],['cookie','https://material.invalid/original?secret=1','GET'],['write','https://material.invalid/original','POST'],['file','file:///etc/passwd','GET'],['data','data:text/html,secret','GET']])await paused({requestId:id,request:{url:target,method}});},async evaluateHandle(source){if(options.delayed)await new Promise(resolve=>setTimeout(resolve,10));assert(!source.includes(material.sourceUrl));assert(source.includes(extractPdfEmbeddedImagesWithLibrary.toString()));if(options.evaluateFail)throw Error('remote');return handle;}};
-  const dependencies={binding:{},assets:{async fetch(request){calls.assets.push(request.url);return new Response('static pdfjs');}},now:()=>100,logger:entry=>calls.logs.push(entry),capacity:{async reserve(){return options.denied??{ok:true,value:{reservedMilliseconds:options.delayed?1:60_000}};},async reconcile(command){calls.reconciled.push(command);return {ok:true,value:null};}},launcher:{async launch(){calls.launches++;if(options.launchFail)throw Error('launch');return {async newPage(){return page;},async close(){calls.closed++;if(options.closeFail)throw Error('close');}};}}};
+  const dependencies={binding:{},assets:{async fetch(request){calls.assets.push(request.url);return new Response('static pdfjs');}},now:()=>100,logger:entry=>calls.logs.push(entry),capacity:{async reserve(){return options.denied??{ok:true,value:{reservedMilliseconds:options.delayed||options.delayedTransfer?1:60_000}};},async reconcile(command){calls.reconciled.push(command);return {ok:true,value:null};}},launcher:{async launch(){calls.launches++;if(options.launchFail)throw Error('launch');return {async newPage(){return page;},async close(){calls.closed++;if(options.closeFail)throw Error('close');}};}}};
   return {calls,extract:createBrowserMaterialImageExtractor(dependencies),extracted};
 }
 
@@ -42,9 +42,13 @@ test('local virtual origin denies every other request and roundtrips bounded bas
   assert.deepEqual(Buffer.from(fulfills[1].args.body,'base64'),Buffer.from(bytes));
   assert.match(fulfills[0].args.responseHeaders.find(header=>header.name==='Content-Security-Policy').value,/connect-src 'self'; worker-src 'none'/);
   assert.deepEqual(calls.cdp.filter(call=>call.method==='Fetch.failRequest').map(call=>call.args.requestId),['outside','cookie','write','file','data']);
-  assert(calls.chunks.every(([, ,length])=>length<=48*1024));
+  assert(calls.chunks.every(([, ,length])=>length<=512*1024));
   assert.equal(calls.disposed,1);assert.equal(calls.closed,1);assert.equal(calls.reconciled[0].outcome,'completed');
   assert(!JSON.stringify(calls.logs).includes('secret'));
+  const phases=calls.logs.filter(entry=>entry.event==='material-image-browser-phase');
+  assert.deepEqual(phases.map(entry=>entry.stage),['launch','decode','transfer']);
+  assert(phases.every(entry=>entry.durationMs>=0));
+  assert.equal(phases[2].count,result.value.length);assert.equal(phases[2].itemCount,calls.chunks.length);
 });
 
 test('quota rejection is retained and launches no browser',async()=>{
@@ -78,16 +82,19 @@ test('launch and close uncertainty retain full ledger charge; failed evaluation 
 });
 
 test('large outputs use several bounded chunks and preserve every byte and image',async()=>{
-  const png=new Uint8Array(120_000);png.set([137,80,78,71,13,10,26,10]);
+  const png=new Uint8Array(1_200_000);png.set([137,80,78,71,13,10,26,10]);
   const remote={ok:true,value:Array.from({length:101},(_,index)=>({path:`page:1:image:${index+1}`,context:'Embedded image on PDF page 1.',mediaType:'image/png',bytes:index===0?png:png.subarray(0,8)}))};
   const {calls,extract}=await fixture({remote});
   const result=await extract(material,bytes);assert(result.ok);assert.equal(result.value.length,101);
   assert.deepEqual(result.value[0].bytes,png);assert.equal(calls.chunks.filter(([index])=>index===0).length,3);
-  assert(calls.chunks.every(([, ,length])=>length<=48*1024));
+  assert(calls.chunks.every(([, ,length])=>length<=512*1024));
 });
 
-test('reservation deadline closes remote session and cannot report late success',async()=>{
-  const {calls,extract}=await fixture({delayed:true});
-  assert.deepEqual(await extract(material,bytes),{ok:false,error:{kind:'MaterialImageBrowserTimedOut'}});
-  assert.equal(calls.disposed,1);assert.equal(calls.closed,2);assert.equal(calls.reconciled[0].outcome,'completed');
+test('reservation deadline identifies decode or transfer and cannot report late success',async()=>{
+  for(const [options,stage]of [[{delayed:true},'Decode'],[{delayedTransfer:true},'Transfer']]){
+    const {calls,extract}=await fixture(options);
+    assert.deepEqual(await extract(material,bytes),{ok:false,error:{kind:`MaterialImageBrowser${stage}TimedOut`}});
+    assert.equal(calls.disposed,1);assert.equal(calls.closed,2);assert.equal(calls.reconciled[0].outcome,'completed');
+    assert.equal(calls.logs.findLast(entry=>entry.event==='material-image-browser-phase').stage,stage.toLowerCase());
+  }
 });
