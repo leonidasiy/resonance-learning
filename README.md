@@ -66,15 +66,20 @@ until any required acquisition service is provisioned.
    For your own file, open **Library → Upload a private document**.
 2. Enter a title if needed; paste text or select a `.txt`, `.md`, `.pdf`,
    `.pptx`, PNG, JPEG, WebP, or GIF file. Text processing is the default.
-   Select **Process images in uploads** only when you want visual analysis of
-   raster images or PDF pages. A blank PDF page range means all pages; `1,3-5`
+   Embedded raster images in PDFs and PowerPoint files are extracted and matched
+   automatically, including in text mode; those images are sent to the vision
+   model. **Read PDF pages as images** additionally reads whole pages for scanned
+   text or vector diagrams. A blank PDF page range means all pages; `1,3-5`
    selects specific pages. Confirm that you have permission for storage,
    transformation, and external AI processing, then choose **Upload and process**.
 3. Watch the source in **Library**. Its card refreshes every minute with the
    current page/section, extracted points and generated question count. It reports a named reason when
    action is needed, or **Knowledge extraction and paired question generation
    completed**. If a transient failure shows **Retry processing**, use that
-   control. Related knowledge appears with the source after processing.
+   control. Reviewed knowledge appears incrementally while the rest of the
+   source continues processing. Expand the source to inspect its knowledge;
+   long lists scroll inside the expanded panel. Dismissing a failed processing
+   item keeps its saved source.
    **Cancel processing** asks for confirmation and removes that run's points,
    quizzes and associated images.
 4. Open **Feed** to study a five-card batch. Reach the bottom and choose **Mark
@@ -86,8 +91,10 @@ until any required acquisition service is provisioned.
 
 Semantic text grading uses `~typesafe/jev-latest` and accepts answers at ≥70%
 correctness probability. Exact answers and choices use answer-key checks.
-The production MiMo reviewer approves extracted points and quizzes before
-publication; external test evaluation does not control publication.
+The production reviewer uses `xiaomi/mimo-v2.6-flash` to approve extracted
+points and quizzes before publication; external test evaluation does not control
+publication. Knowledge without an accepted quiz can remain in Library; Feed
+requires eligible knowledge-and-quiz pairs.
 
 Only upload material you are allowed to use. Source rights checks, access
 controls and private storage apply in both full backend modes. The sample demo
@@ -100,4 +107,41 @@ as you scroll; missing associated imagery leaves no placeholder box. Progress
 shows daily and subject review accuracy, activity, scores and attempt totals.
 Historical unclassified records are preserved without backfills.
 
-See [setup and everyday use](SETUP.md) for installation, reminders, data and offline limits.
+Review supports skipping without recording an answer, explicit batch refresh,
+and countdowns before replacing skipped questions or moving to the next batch.
+Submitted text answers show canonical answers and component feedback. Associated
+images appear in Review too. Feed offers optional card reading through the
+browser's speech synthesis. These controls and five-card batches are product
+choices; activity and model scores do not establish durable learning.
+
+See [setup and everyday use](SETUP.md) for installation, reminders, data and offline limits,
+and [recent changes](changelog.md) for the current implementation history.
+
+## Development and validation
+
+Application features live in `src/features/`, with route/startup composition in
+`src/routes/` and `src/startup/`. `worker/` contains the hosted API, durable
+workflows and migrations; `local/` supplies computer-mode bindings for the shared
+pipeline. `acquisition/` handles permitted website resources. The four
+`agent-config/` roles and their canonical digests configure model work; see
+[model configuration](MODEL_APIS.md).
+
+Use the Deno tasks in `deno.json`:
+
+```sh
+npm ci
+deno task check
+deno task build
+deno task test
+deno task check:migrations
+deno task test:migrations
+```
+
+Build before the Deno test suite: build-contract tests read `dist/`. Node runtime
+and integration coverage lives in `tests-node/`; run the files relevant to the
+change with `node --test --test-timeout=30000 tests-node/NAME.test.mjs`.
+`deno task test:material-batch` covers synthetic upload/checkpoint recovery.
+These commands use fixtures; paid provider/benchmark runs need their own inputs
+and authorization. After previews and checks close, generated root builds and
+disposable test outputs can be removed. Preserve runtime data, required fixtures,
+canonical dependencies and retained accounting/provenance.

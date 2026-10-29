@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-10-29 processing recovery, images and reviewer
+
+- Switched the production knowledge/quiz reviewer to MiMo V2.6 Flash; the
+  checked-in role and self-host template contain matching canonical digests.
+- Persisted CPU-crash recovery, gradual smaller work admission and durable model
+  stage checkpoints. Completed reviews are selected independently of CPU limits;
+  interrupted requests and transient failures recover without discarding saved work.
+- Extract embedded PDF/PowerPoint raster images and resume them from private,
+  digest-bound storage. Read cached pixels only when needed and propagate integrity
+  failures. Hosted PDF decoding uses Browser Run with separate launch/decode/transfer
+  diagnostics and fewer transfer round trips.
+- Reuse independent captions, fixed upload inventories and source audit work;
+  reduce duplicate agent context, hashing allocations and D1 row scans.
+- Preserve source language and useful subject relationships; reject generic course
+  framing as learning targets. Ground review history in exact validated quotations.
+
+## 2026-10-27–28 Library, source coverage and quiz publication
+
+- Publish reviewed knowledge incrementally and begin quizzes during extraction.
+  Account for every source block, preserve table context and inline links, and
+  repair incomplete planner/reviewer responses with precise validation feedback.
+- Accept grounded quizzes scoring at least 7/10. After bounded quiz exhaustion,
+  retain accepted knowledge in Library; Feed still requires a usable paired quiz.
+- Redesign processing cards and unify source disclosures. Link processing status
+  to the source, allow failed-item dismissal without source deletion, retain search
+  options and bound expanded knowledge lists. Match Library subject badges to Feed.
+- Exclude YouTube URLs from Brave web results; the dedicated YouTube provider
+  remains metadata-only.
+
+## 2026-10-19–24 Feed and Review
+
+- Cache opened panels while retaining content during refresh. Add optional Feed
+  card reading with browser speech synthesis.
+- Keep submitted feedback and show canonical text answers and per-component
+  results. Refresh batches without reopening already attempted quiz variants.
+- Check quiz answer importance and repair answer targets before rejecting useful
+  questions. Coordinate paired recall intervals and show associated Review images.
+- Add skipped-question replacement and next-batch countdowns. Skipping does not
+  record an answer or change recall scheduling.
+
+## 2026-10-18 study and progress
+
+- Refresh Feed after Library additions and replace batches without losing saved
+  progress. Review can refresh early, skips do not schedule answers, and choice
+  order stays shuffled consistently within a batch.
+- Show daily-goal completion feedback and clearer Progress charts with calendar
+  date axes, source-subject filtering and subjects ranked by knowledge count.
+  Daily accuracy history is connected to actual recorded review outcomes.
+
 ## 2026-10-18 repository cleanup
 
 - Excluded local agent/design tools, internal notes, generated validation reports,

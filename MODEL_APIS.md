@@ -62,6 +62,12 @@ endpoint. Set `LLM_MODEL` for classification/older generation; optionally set
 
 ## 2. Choose the four workflow-role models
 
+The checked-in production reviewer (`question-evaluator`, version v8) uses
+`xiaomi/mimo-v2.6-flash` with `reasoningEffort: none`. The other three roles use
+`z-ai/glm-5.3-flash`. These are defaults in the repository, not a guarantee of
+provider availability. The reviewer evaluates both knowledge and quizzes;
+external benchmark judges cannot publish learning content.
+
 Open each file in `agent-config/`:
 
 - `rights-assessor.yaml`
@@ -94,6 +100,28 @@ The command prints configuration hashes, never API keys.
 Let active source-processing runs finish before changing provider/models. A run
 with an old configuration digest fails validation after YAML changes; do not
 delete learner data to fix it. Start a new processing run using the new configuration.
+
+### Processing, recovery and private usage records
+
+Model stages save validated results before continuing. Completed reviews and
+accepted knowledge can be reused after interruption, and quizzes can begin
+while extraction continues. Recoverable workflow/provider failures have bounded
+automatic recovery; billing, permission and exhausted-retry failures retain a
+named reason and can require owner action. Explicit retry reuses durable work;
+it does not replenish provider credits or benchmark allowances.
+
+Extraction preserves the supporting source's language and useful subject
+relationships. Course outlines and document-navigation trivia are excluded as
+learning targets. Quiz answer targets receive a separate importance check and
+bounded repair. A quiz needs at least 7/10 from the production reviewer plus
+validated grounding; rejected quiz generation no longer deletes otherwise
+accepted knowledge. These thresholds are product policy, not measured learning
+efficacy or calibrated correctness probabilities.
+
+Private usage receipts retain model request timing alongside usage accounting.
+Keep receipts, prompts, source material and learner records out of GitHub and
+browser bundles. The runtime reduces repeated image reads and agent-context
+serialization; it does not bypass request, storage or accounting checks.
 
 ## 3. Optional semantic-search reranking
 

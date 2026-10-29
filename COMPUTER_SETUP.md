@@ -94,8 +94,9 @@ This test uses **your own API credits**. Start small:
    Confirm permission for storage/transformation/external AI processing, then
    choose **Upload and process**.
 2. Watch the Library card until knowledge extraction and paired question
-   generation complete. Processing continues while the browser is closed, as
-   long as the server terminal and computer remain running.
+   generation complete. Accepted knowledge appears incrementally; usable Feed
+   batches need paired quizzes. Processing continues while the browser is closed,
+   as long as the server terminal and computer remain running.
 3. Once at least five eligible published knowledge-and-quiz pairs are available,
    study a batch in **Feed**, choose **Mark batch studied**, then answer its paired
    quizzes in **Review**. Check feedback and **Progress**.
@@ -112,6 +113,10 @@ This test uses **your own API credits**. Start small:
 
 A small lesson may produce fewer than five useful points. Add more original
 material rather than expecting the service to invent enough points for a batch.
+PDF and PowerPoint uploads also extract their embedded raster images for the
+vision model in normal text mode. Whole-page PDF image reading remains a separate
+option for scans and vector diagrams. See [processing and Review controls](SETUP.md#processing-and-review-controls).
+
 Model/provider failures have named errors and can require a retry. Exact/choice
 answer checks work without semantic grading; non-exact answers can remain pending
 if your grading service is unavailable.

@@ -73,10 +73,38 @@ delivery have not been acceptance-tested for this release.
 
 Multiple-choice and exact text answers use the saved answer key. Other text
 answers pass when the configured decision model (Jev by default) gives them at least 70% probability of
-being correct. A paired question requires its choice and all blanks to pass.
+being correct. Choice and fill-blank variants appear as separate Review questions;
+all blanks in a fill-blank question must pass for full credit.
 If the grading service is unavailable, the answer stays pending; try again later.
 **See more often** moves a knowledge point to a shorter recall interval;
 **See less often** moves it to a longer one and informs future extraction.
+
+### Processing and review controls
+
+Accepted knowledge appears in Library while the source continues processing.
+Expand a source to read its knowledge; long lists have an internal scroll area.
+A failed processing item can be dismissed without deleting the source. Use
+**Retry processing** when offered; transient failures can also recover
+from saved checkpoints automatically. Billing or permission failures still need
+your action. **Cancel processing** removes that run's generated content.
+
+PDF and PowerPoint uploads automatically extract embedded raster images for
+vision-model matching, including when their text is processed normally.
+**Read PDF pages as images** additionally reads complete PDF pages. A selected
+PDF text excerpt does not authorize extracting images from elsewhere in the
+original document. These operations use your configured model services.
+
+In Review, **Skip** records no answer or scheduling result. Its **Replace quiz**
+countdown lets you continue without treating a skip as a wrong answer. When
+all questions are handled, a **Next batch** countdown loads another batch;
+you can also use **Refresh batch** early. A refresh clears unsent input while
+preserving saved attempts. Text-answer feedback includes canonical answers and
+per-blank results; question images stay associated with their source.
+
+Feed also offers browser speech synthesis for reading a card. Voice support
+comes from your browser/device and is separate from uploaded-audio transcription.
+Five-card batches, refresh delays and model acceptance scores are product choices.
+Progress reports activity and answer outcomes; it does not prove mastery or transfer.
 
 ### Login and data
 

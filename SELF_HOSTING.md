@@ -224,6 +224,19 @@ code, fonts and images. The first build downloads pinned minifiers with `npx`.
 A dry run validates bundling without publishing; it does not test API credentials
 or provision every service. A real deployment creates the configured Workflow
 and Durable Objects and uploads the app into **your** Cloudflare account.
+The `SOURCE_BROWSER` binding and built `pdfjs.mjs` asset also support decoding
+embedded PDF images outside the Worker's CPU budget. Keep the browser binding
+from the example even when website browsing uses Firecrawl. These sessions use
+your account's Browser Run capacity; launch, decode and transfer timeout errors
+are reported separately. Uploaded image manifests and original pixels stay in
+private storage, with digest validation when pixels are read.
+
+For an existing installation, apply the pending migrations using this guide's
+migration command before deploying code that requires them. The chain currently
+includes `0031_quiz_acceptance_seven.sql` (quiz score policy, preserving existing
+rows) and `0032_workflow_media_lookup_index.sql` (media lookup index). Do not
+reset the database or run the separate historical classification backfill.
+
 Enable Images transformations in your account if Cloudflare requests activation.
 Review the [Images service requirements](https://developers.cloudflare.com/images/optimization/binding/).
 
@@ -267,9 +280,9 @@ keep the acquisition server/tunnel running when processing website links.
 [ACQUISITION_SETUP.md](ACQUISITION_SETUP.md) covers the complete included server
 and private Cloudflare bridge. Your server handles robots checks and permitted
 media; your own Firecrawl Browser Sandbox handles workflow page browsing. No
-local Chrome is needed for those operations. The legacy `SOURCE_BROWSER`
-binding is not a substitute for that service. Rights, authentication, public
-network and robots checks still apply.
+local Chrome is needed for those operations. The separate `SOURCE_BROWSER`
+binding also decodes embedded PDF images; it does not replace acquisition.
+Rights, authentication, public network and robots checks still apply.
 
 Closing a temporary tunnel or sleeping its computer interrupts website
 acquisition. Already-published Feed/Review/Progress and private-file uploads

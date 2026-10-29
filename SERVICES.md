@@ -24,7 +24,7 @@ Check current allowances and prices in your own accounts before enabling:
 - [R2](https://developers.cloudflare.com/r2/pricing/) and
   [Images](https://developers.cloudflare.com/images/pricing/) for private files
   and image transformations; [Browser Run](https://developers.cloudflare.com/browser-rendering/pricing/)
-  for the legacy browser binding.
+  for browser-bound image decoding and legacy acquisition.
 - [OpenRouter model pricing](https://openrouter.ai/models),
   [Brave Search plans](https://api-dashboard.search.brave.com/),
   [Taddy plans](https://taddy.org/developers/podcast-api) and
@@ -53,7 +53,7 @@ The current checked-in implementation requests:
 | Purpose | Model/API |
 | --- | --- |
 | Rights assessment, knowledge extraction, question generation and vision | `z-ai/glm-5.3-flash`, through OpenRouter. |
-| Production knowledge/quiz review | `xiaomi/mimo-v2.6-pro`, through OpenRouter. |
+| Production knowledge/quiz review | `xiaomi/mimo-v2.6-flash`, through OpenRouter. |
 | Semantic grading of non-exact answers | `~typesafe/jev-latest`, OpenRouter's alpha Decisions API. |
 
 These are code/configuration contracts, not a claim that every account can access
@@ -65,7 +65,9 @@ OpenAI-compatible API, follow [switching model APIs](MODEL_APIS.md). This includ
 replacing semantic grading; the default Jev service is optional in that setup.
 
 `agent-config/*.yaml`, their loader, the digest command, and the matching digest setting are included
-in GitHub. Private development skills and evaluation credentials are not runtime
+in GitHub. The reviewer keeps `reasoningEffort: none`; configuration changes
+require fresh canonical digests as described in [model configuration](MODEL_APIS.md).
+Private development skills and evaluation credentials are not runtime
 dependencies. Submitted text/images are sent to the configured AI services when
 you authorize processing; review their privacy terms before uploading material.
 The current adapter does not impose an OpenRouter zero-data-retention route.
@@ -163,7 +165,7 @@ binding keys. Resource names and account identifiers are yours.
 | `IMAGES` | Cloudflare Images transformations; required by workflow composition even for text-first runs. |
 | `YOUTUBE_QUOTA_LEDGER` | Durable Object for YouTube quota accounting. |
 | `TRANSCRIPT_AUTHORIZATION_LEDGER` | Durable Object for publisher-transcript authorization. |
-| `SOURCE_BROWSER` | Legacy Cloudflare Browser Run binding; not a replacement for `PUBLIC_ACQUISITION`. |
+| `SOURCE_BROWSER` | Browser Run for hosted embedded-PDF image decoding and legacy acquisition; keep it alongside `PUBLIC_ACQUISITION`. |
 | `CF_VERSION_METADATA` | Cloudflare's deployment version information. |
 | `PUBLIC_ACQUISITION` | Private service binding to your acquisition gateway Worker. |
 
