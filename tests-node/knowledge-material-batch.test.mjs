@@ -434,6 +434,20 @@ test("production upload runtime resumes text batches and processes selected PDF 
     assert.equal(decisionCalls,5,'Both original images are compared against the changed knowledge set');
     assert.equal(db.prepare("SELECT COUNT(*) n FROM knowledge_workflow_stages WHERE run_id=? AND stage_key GLOB 'material-image-manifest:*'").get(captureRunId).n,1,'Knowledge changes share the digest-bound original image manifest');
     assert.equal(cacheWrites,cachedImages.size,'Association replay never rewrites cached original images or metadata');
+    if(format==='pdf'&&width===3){
+      const beforeCorruption=modelCalls;
+      for(const [key,object] of cachedImages)if(!key.includes('manifest-'))object.bytes[0]^=1;
+      db.prepare("DELETE FROM knowledge_workflow_stages WHERE run_id=? AND stage_key GLOB 'captured-image-caption:*'").run(captureRunId);
+      const corruptedPoint={...changedPoint,summary:`${changedPoint.summary} Cache integrity check.`};
+      db.prepare('UPDATE extraction_knowledge_points SET point_json=? WHERE run_id=? AND knowledge_id=?').run(JSON.stringify(corruptedPoint),captureRunId,changedPoint.id);
+      db.prepare("UPDATE knowledge_workflow_runs SET state='per-point-quiz-loop',run_json=json_set(run_json,'$.state','per-point-quiz-loop') WHERE run_id=?").run(captureRunId);
+      const corrupted=await captureRuntime.execute(unwrap(await repository.findById(ownerId,captureRunId)));
+      assert.equal(corrupted.ok,false);
+      assert.equal(corrupted.error.detailKind,'MaterialImageCacheBytesChanged','Lazy pixel corruption stops processing instead of silently discarding the image');
+      assert.equal(modelCalls,beforeCorruption,'Corrupt originals never dispatch inference');
+      assert(!db.prepare('SELECT warnings_json FROM knowledge_workflow_page_image_warnings WHERE run_id=?').all(captureRunId).some(row=>/MaterialImageCacheBytesChanged/.test(row.warnings_json)));
+    }
+
 
 
     }

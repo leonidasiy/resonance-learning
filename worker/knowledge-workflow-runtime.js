@@ -1523,7 +1523,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           }),{modelCall:true,maximumProviderAttempts:1,cacheProviderRefusals:true});
           return result.ok?(isCapturedImageCaption(result.value.output)?{ok:true,value:result.value.output}:{ok:false,error:{kind:'CapturedImageCaptionInvalid'}}):result;
         });
-        if(!caption.ok){if(/WorkflowProcessingStopped|Persistence|Ledger|Accounting|Budget|Credential|Authorization/u.test(caption.error.kind))return caption;warnings.push(`Image warning (${image.path}, ${image.url}): ${caption.error.kind}. Text retained.`);continue;}
+        if(!caption.ok){if(/WorkflowProcessingStopped|Persistence|Ledger|Accounting|Budget|Credential|Authorization|^(MaterialImageCache|R2|SourceContent)/u.test(caption.error.kind))return caption;warnings.push(`Image warning (${image.path}, ${image.url}): ${caption.error.kind}. Text retained.`);continue;}
         const input=capturedImageDecision(image,caption.value,points),inputDigest=await imageHash(new TextEncoder().encode(JSON.stringify(input)));
         const scored=await retry(attempt=>stages.run(run,`captured-image-score:${image.path}:${inputDigest}:${attempt}`,inputDigest,identity=>withModelSlot(async()=>{
           admitModelStage(true);
