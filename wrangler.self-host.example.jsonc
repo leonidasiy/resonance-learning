@@ -80,7 +80,7 @@
     "SOURCE_R2_CLASS_B_MONTHLY_LIMIT": "1000000",
     "SOURCE_R2_OBSERVATION_MAX_AGE_MS": "86400000",
     "KNOWLEDGE_WORKFLOW_ENABLED": "true",
-    "KNOWLEDGE_WORKFLOW_CONFIG_DIGESTS": "{\"rights-assessor\":\"sha256:735d8469a95f2a63a2359ab5de8764ec5ffc7ce39ed2557c407393f2da196670\",\"knowledge-scraper\":\"sha256:499e8d1952cc73541287dac39a22f8a5e7e38a353ece463ecc3ecc4eb7bf7cd4\",\"question-generator\":\"sha256:a0a2499540a002b1e6c6a1ff486debd9618a16c3b27bf4dc2cb7f0168aabb7e5\",\"question-evaluator\":\"sha256:50257d4b2f1586745d01d043cde730b0757f385f0f99d9161ae3e51fa7a25fee\"}",
+    "KNOWLEDGE_WORKFLOW_CONFIG_DIGESTS": "{\"rights-assessor\":\"sha256:735d8469a95f2a63a2359ab5de8764ec5ffc7ce39ed2557c407393f2da196670\",\"knowledge-scraper\":\"sha256:499e8d1952cc73541287dac39a22f8a5e7e38a353ece463ecc3ecc4eb7bf7cd4\",\"question-generator\":\"sha256:a0a2499540a002b1e6c6a1ff486debd9618a16c3b27bf4dc2cb7f0168aabb7e5\",\"question-evaluator\":\"sha256:cc6f32a3267b033cf998869d40afaa26d7c25d3ba60fe9f7c587feb8f9f3d4b7\"}",
     "PUBLIC_ACQUISITION_ENDPOINT": "https://YOUR_ACQUISITION_HOST"
   },
   "durable_objects": {

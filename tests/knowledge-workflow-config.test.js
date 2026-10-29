@@ -187,6 +187,10 @@ Deno.test("all checked-in role configurations satisfy the closed schema", async 
     if (result.ok) {
       assertEquals(result.value.role, role);
       assertEquals(result.value.limits.compactionThresholdTokens, 500_000);
+      if (role === "question-evaluator") {
+        assertEquals(result.value.model.name, "xiaomi/mimo-v2.6-flash");
+        assertEquals(result.value.model.reasoningEffort, "none");
+      }
     }
   }
 });

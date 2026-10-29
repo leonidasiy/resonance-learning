@@ -256,10 +256,10 @@ Deno.test('response format and optional validated reasoning effort are independe
 
 Deno.test("MiMo evaluator uses automatic provider routing with strict schema and retained reasoning setting", async () => {
   /** @type {Record<string, any> | undefined} */ let body;
-  const model = createOpenRouterKnowledgeModel({apiKey:"synthetic-key",endpoint:"https://example.test/model",model:"xiaomi/mimo-v2.6-pro",timeoutMs:1000,maximumInputCharacters:10000,fetch:async(_url,init)=>{body=JSON.parse(String(init?.body));return Response.json({id:"synthetic-mimo",choices:[{finish_reason:"stop",message:{content:'{"score":9}'}}]});},now:Date.now,logger:()=>{}});
+  const model = createOpenRouterKnowledgeModel({apiKey:"synthetic-key",endpoint:"https://example.test/model",model:"xiaomi/mimo-v2.6-flash",timeoutMs:1000,maximumInputCharacters:10000,fetch:async(_url,init)=>{body=JSON.parse(String(init?.body));return Response.json({id:"synthetic-mimo",choices:[{finish_reason:"stop",message:{content:'{"score":9}'}}]});},now:Date.now,logger:()=>{}});
   const responseSchema={name:"synthetic_review",schema:{type:"object",properties:{score:{type:"integer"}},required:["score"],additionalProperties:false}};
   assertEquals((await model.generate({...command(),role:"question-evaluator",reasoningEffort:"none",responseSchema})).ok,true);
-  if(body===undefined)throw new Error("Model body was not captured.");assertEquals(body.model,"xiaomi/mimo-v2.6-pro");assertEquals(body.provider.sort,undefined);assertEquals(body.provider.only,undefined);assertEquals(body.provider.require_parameters,true);assertEquals(body.provider.allow_fallbacks,true);assertEquals(body.reasoning.effort,"none");assertEquals(body.response_format.type,"json_schema");assertEquals(body.response_format.json_schema.strict,true);
+  if(body===undefined)throw new Error("Model body was not captured.");assertEquals(body.model,"xiaomi/mimo-v2.6-flash");assertEquals(body.provider.sort,undefined);assertEquals(body.provider.only,undefined);assertEquals(body.provider.require_parameters,true);assertEquals(body.provider.allow_fallbacks,true);assertEquals(body.reasoning.effort,"none");assertEquals(body.response_format.type,"json_schema");assertEquals(body.response_format.json_schema.strict,true);
 });
 
 Deno.test("knowledge model rejects provider redirects without forwarding credentials", async () => {

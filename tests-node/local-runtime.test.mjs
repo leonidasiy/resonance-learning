@@ -140,7 +140,7 @@ for(const compatible of [false,true])test(`${compatible?'Alternate compatible AP
     applicationRoot=join(directory,'configured-project');await mkdir(join(applicationRoot,'agent-config'),{recursive:true});await symlink(join(root,'worker'),join(applicationRoot,'worker'),'dir');
     for(const role of ['rights-assessor','knowledge-scraper','question-generator','question-evaluator']){
       const source=await readFile(join(root,'agent-config',`${role}.yaml`),'utf8');
-      await writeFile(join(applicationRoot,'agent-config',`${role}.yaml`),source.replace('provider: openrouter','provider: openai-compatible').replace(/name: (?:z-ai\/glm-5.3-flash|xiaomi\/mimo-v2.6-pro)/,`name: ${model}`));
+      await writeFile(join(applicationRoot,'agent-config',`${role}.yaml`),source.replace('provider: openrouter','provider: openai-compatible').replace(/name: [^\n]+/,`name: ${model}`));
     }
   }
   const create=()=>createLocalApplication({root:applicationRoot,dataDirectory:join(directory,'data'),password,environment:compatible?{LLM_API_KEY:'synthetic-own-key',LLM_CHAT_ENDPOINT:chatEndpoint,LLM_MODEL:model,LLM_GRADING_MODEL:model}:{OPENROUTER_API_KEY:'synthetic-own-key'},fetch:provider,logger:()=>{}});

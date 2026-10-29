@@ -1,10 +1,10 @@
 # Legacy role ID retained for persisted runs; this is the production reviewer.
 # External test evaluation has separate calls and no publication authority.
 role: question-evaluator
-version: question-evaluator-v7
+version: question-evaluator-v8
 model:
   provider: openrouter
-  name: xiaomi/mimo-v2.6-pro
+  name: xiaomi/mimo-v2.6-flash
   reasoningEffort: none
 procedureVersion: evaluator-procedure-v1
 promptVersion: evaluator-prompt-v3
