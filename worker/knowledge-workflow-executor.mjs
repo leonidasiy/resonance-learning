@@ -1,4 +1,6 @@
 // Shared executor keeps hosted and computer runs on the same persistence and control paths.
+import {createBrowserMaterialImageExtractor} from "./material-image-browser.mjs";
+import {D1BrowserRunCapacityLedger} from "./browser-run-capacity-d1.js";
 import {resolveModelApi} from "./model-api.js";
 import { resolveR2CapacityPolicy } from "./r2-capacity-policy.js";
 import { createMaterialImageContentStore } from "./material-image-content.js";
@@ -178,8 +180,12 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
       if(!capacityPolicy.ok)throw new Error(`${capacityPolicy.error.kind}:${capacityPolicy.error.field}`);
       materialImageContent=createMaterialImageContentStore({database,bucket,ownerId,policy:capacityPolicy.value,now,createId:()=>crypto.randomUUID()});
     }
+    const extractMaterialImages=environment.SOURCE_BROWSER&&environment.ASSETS&&typeof environment.SOURCE_BROWSER_ACCOUNT_SCOPE==='string'
+      ?createBrowserMaterialImageExtractor({binding:environment.SOURCE_BROWSER,assets:environment.ASSETS,now:Date.now,logger,
+        capacity:new D1BrowserRunCapacityLedger({database,now,createId:()=>crypto.randomUUID(),policy:{accountScope:environment.SOURCE_BROWSER_ACCOUNT_SCOPE,dailyLimitMilliseconds:600_000,maximumConcurrentSessions:1,minimumLaunchIntervalMilliseconds:20_000,reservationMilliseconds:60_000}})})
+      :undefined;
     const createRuntime = (executionAttempt = 1,cpuLimited = false) => createKnowledgeWorkflowRuntime({
-      executionAttempt,cpuLimited,
+      executionAttempt,cpuLimited,extractMaterialImages,
       imagePolicy:WEBPAGE_IMAGE_POLICY,
       database,
       fetch: workerFetch,

@@ -77,7 +77,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
     let allowQuizRecovery=false,failedQuizReviews=0,recoveredDrafts=0;
     let modelCalls = 0; let invalidPairedDraftInjected = false, pairedFeedbackSeen = false;
     const transport = async (_url, init) => {
-      assert(++modelCalls < 300, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
+      assert(++modelCalls < 500, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
       const body = JSON.parse(init.body);
       if(String(_url).endsWith('/alpha/decisions')){
         assert.equal(imagePreflights.filter(identity=>identity.runId===associationRunId&&identity.stageKey.startsWith('captured-image-score:')).length,decisionCalls+1,'Each score dispatch has its own durable preflight identity');
@@ -359,9 +359,10 @@ test("production upload runtime resumes text batches and processes selected PDF 
 
     await t.test('captured web, PDF and PowerPoint originals share captioning, scoring, retries and attachment', async () => {
     // Synthetic runtime material; actual Chromium PDF parsing is covered separately.
-    for(const format of ['capture','pdf','pptx']) {
+    for(const [format,width] of ['capture','pdf','pptx'].flatMap(format=>[[format,3],[format,1]])) {
+    const scenario=`${format}${width===1?'-width1':''}`;
     captionCalls=0;decisionCalls=0;decisionRefused=false;
-    const captureRunId=`capture-run-${format}`,captureSourceId=`capture-source-${format}`,captureUrl=`https://publisher.example/article-${format}`;
+    const captureRunId=`capture-run-${scenario}`,captureSourceId=`capture-source-${scenario}`,captureUrl=`https://publisher.example/article-${scenario}`;
     associationRunId=captureRunId;
     let captureBytes=unwrap(packUrlCapture({sourceUrl:captureUrl,responseUrl:captureUrl,pdf:new TextEncoder().encode('%PDF-fixture'),images:[1,2].map(n=>({path:`image:${n}`,url:`https://cdn.example.org/figure-${n}.png`,caption:`Source caption ${n}`,alt:'Source diagram',context:'Original article context',mediaType:'image/png',bytes:png}))}));
     let captureMaterial={...material,runId:captureRunId,sourceId:captureSourceId,sourceUrl:captureUrl,mode:'text',mediaType:URL_CAPTURE_TYPE,fileName:'article.pkpc',contentDigest:createHash('sha256').update(captureBytes).digest('hex'),sections:sections.filter(s=>s.text).slice(0,2),media:[]};
@@ -376,21 +377,43 @@ test("production upload runtime resumes text batches and processes selected PDF 
 
     const captureService=createKnowledgeWorkflowService(repository,{now:clock,createId:()=>captureRunId,logger});
     let captureRun=unwrap(await captureService.createRun({ownerId,sourceId:captureSourceId,sourceRevision:1,canonicalSourceIdentity:captureUrl,contentSignature:captureMaterial.contentDigest,idempotencyKey:captureRunId,sourceOrigin:format==='capture'?'url-material':'private-document',configDigests:Object.fromEntries(Object.entries(configs).map(([role,config])=>[role,config.digest]))})).run;
-    unwrap(await materials.persist({ownerId,runId:captureRunId,materialId:`capture-material-${format}`,idempotencyKey:captureRunId,fingerprint:captureMaterial.contentDigest,objectKey:'synthetic-capture',material:captureMaterial,createdAt:clock()}));
-    captureRun=unwrap(await captureService.attachMaterial({ownerId,runId:captureRunId,materialId:`capture-material-${format}`}));
+    unwrap(await materials.persist({ownerId,runId:captureRunId,materialId:`capture-material-${scenario}`,idempotencyKey:captureRunId,fingerprint:captureMaterial.contentDigest,objectKey:'synthetic-capture',material:captureMaterial,createdAt:clock()}));
+    captureRun=unwrap(await captureService.attachMaterial({ownerId,runId:captureRunId,materialId:`capture-material-${scenario}`}));
     db.prepare("INSERT INTO library_sources (owner_id,source_id,submitted_url,canonical_url,title,description,adapter_json,identity_evidence_json,state,approved_at,updated_at,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(ownerId,captureSourceId,captureUrl,captureUrl,'Captured URL','Offline captured assets fixture',JSON.stringify({kind:format==='capture'?'web':'private-document'}),'[]','active',clock(),clock(),1);
-    const captureOriginals=new Map();let captureIngests=0,captureRuntime;
+    const captureOriginals=new Map();let captureIngests=0,captureRuntime,extractorCalls=0,browserCloses=0,mediaYields=0;
+    if(width===1){
+      const key='workflow-cpu-backpressure:v2:2';
+      db.prepare("INSERT INTO knowledge_workflow_stages (owner_id,run_id,stage_key,input_digest,status,result_json,created_at,completed_at) VALUES (?,?,?,?,'completed',?,?,?)").run(ownerId,captureRunId,key,key,JSON.stringify({ok:true,value:{width:1,cpuFailures:2}}),clock(),clock());
+    }
     const cachedImages=new Map();let cacheWrites=0,capacityId=0;
     const cacheBucket={put:async(key,bytes,options)=>{cacheWrites++;cachedImages.set(key,{bytes:bytes.slice(),customMetadata:options.customMetadata});},get:async key=>{const object=cachedImages.get(key);return object?{customMetadata:object.customMetadata,arrayBuffer:async()=>object.bytes.slice().buffer}:null;},delete:async key=>{cachedImages.delete(key);}};
-    db.prepare('INSERT INTO source_r2_account_capacity VALUES (?,0,?,?)').run(`capture-${format}`,clock(),clock());
-    const materialImageContent=createMaterialImageContentStore({database,bucket:cacheBucket,ownerId,now:clock,createId:()=>`capture-${format}-${++capacityId}`,policy:{accountScope:`capture-${format}`,storedBytesLimit:10485760,classAMonthlyLimit:1000,classBMonthlyLimit:1000,observationMaximumAgeMs:60000}});
+    db.prepare('INSERT INTO source_r2_account_capacity VALUES (?,0,?,?)').run(`capture-${scenario}`,clock(),clock());
+    const materialImageContent=createMaterialImageContentStore({database,bucket:cacheBucket,ownerId,now:clock,createId:()=>`capture-${scenario}-${++capacityId}`,policy:{accountScope:`capture-${scenario}`,storedBytesLimit:10485760,classAMonthlyLimit:1000,classBMonthlyLimit:1000,observationMaximumAgeMs:60000}});
 
-    for(let step=0;step<8&&captureRun.state!=='completed';step++){
+    for(let step=0;step<60&&captureRun.state!=='completed';step++){
+      const mediaCallsBefore=captionCalls+decisionCalls,closesBefore=browserCloses,attemptsBefore=db.prepare('SELECT COUNT(*) n FROM knowledge_workflow_quiz_attempts WHERE run_id=?').get(captureRunId).n;
       if(captureRun.state==='awaiting-time-limit-decision')captureRun=unwrap(await captureService.advance({ownerId,runId:captureRunId,expectedRevision:captureRun.revision,nextState:'extraction-loop'}));
-      const runtime=captureRuntime=createKnowledgeWorkflowRuntime({preflightModelWork,imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>({ok:true,value:null})},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:captureBytes})},materialImageContent,media:{ingest:forbidden,ingestBytes:async command=>{captureIngests++;if(captureIngests<=3)return {ok:false,error:{kind:'MediaDerivativeProcessingFailed'}};assert.equal(command.candidate.kind,'image');assert.equal(command.sourceUrl,winner.url,'Highest qualifying image wins');assert.equal(command.binding.kind,'webpage-support');assert.equal(command.binding.purpose,'illustration');assert.equal(command.binding.imageId,winner.path);assert.deepEqual(command.bytes,winner.bytes);captureOriginals.set(command.knowledgeId,{id:winner.path,mediaType:'image/png',bytes:winner.bytes,purpose:'illustration'});return {ok:true,value:null};}},reviewMedia:{readOriginal:async scope=>({ok:true,value:captureOriginals.get(scope.knowledgeId)??null})},decodeImage,transition:({run:current,nextState,...rest})=>captureService.advance({ownerId,runId:captureRunId,expectedRevision:current.revision,nextState,...rest})});
-      unwrap(await runtime.execute(captureRun));captureRun=unwrap(await repository.findById(ownerId,captureRunId));
+      const runtime=captureRuntime=createKnowledgeWorkflowRuntime({...(width===1?{extractMaterialImages:async(material,bytes)=>{extractorCalls++;assert.equal(material.contentDigest,captureMaterial.contentDigest);assert.deepEqual(bytes,captureBytes);return {ok:true,value:originals};}}:{}),preflightModelWork,imagePolicy:WEBPAGE_IMAGE_POLICY,database,fetch:transport,browser:{readPage:forbidden,readRobots:forbidden,screenshot:forbidden,close:async()=>{browserCloses++;return {ok:true,value:null};}},apiKey:'offline-fixture',endpoint:'https://example.test/model',now:clock,nowMs:Date.now,logger,configSnapshots:configs,material:materials,materialContent:{read:async()=>({ok:true,value:captureBytes})},materialImageContent,media:{ingest:forbidden,ingestBytes:async command=>{captureIngests++;if(captureIngests<=3)return {ok:false,error:{kind:'MediaDerivativeProcessingFailed'}};assert.equal(command.candidate.kind,'image');assert.equal(command.sourceUrl,winner.url,'Highest qualifying image wins');assert.equal(command.binding.kind,'webpage-support');assert.equal(command.binding.purpose,'illustration');assert.equal(command.binding.imageId,winner.path);assert.deepEqual(command.bytes,winner.bytes);captureOriginals.set(command.knowledgeId,{id:winner.path,mediaType:'image/png',bytes:winner.bytes,purpose:'illustration'});return {ok:true,value:null};}},reviewMedia:{readOriginal:async scope=>({ok:true,value:captureOriginals.get(scope.knowledgeId)??null})},decodeImage,transition:({run:current,nextState,...rest})=>captureService.advance({ownerId,runId:captureRunId,expectedRevision:current.revision,nextState,...rest})});
+      const executed=await runtime.execute(captureRun);
+      if(width===1)assert(captionCalls+decisionCalls-mediaCallsBefore<=1,'Width one admits at most one new captured-image model stage per invocation');
+      if(!executed.ok){
+        assert.equal(width,1);assert.equal(executed.error.detailKind,'WorkflowInvocationYield',JSON.stringify(executed.error));
+        assert.equal(browserCloses,closesBefore+1,'Typed continuation reaches executor cleanup');
+        const yielded=db.prepare("SELECT stage_key,status,provider_failures,result_json FROM knowledge_workflow_stages WHERE run_id=? AND stage_key GLOB 'captured-image-*' AND status='not-started'").all(captureRunId).filter(row=>JSON.parse(row.result_json).error?.kind==='WorkflowInvocationYield');
+        if(yielded.length){
+          mediaYields++;
+          assert(yielded.every(row=>row.provider_failures===0),'Yield never debits provider failure accounting');
+          assert(yielded.every(row=>!imagePreflights.some(identity=>identity.runId===captureRunId&&identity.stageKey===row.stage_key)),'A yielded model identity has not dispatched');
+          assert.equal(db.prepare('SELECT COUNT(*) n FROM knowledge_workflow_quiz_attempts WHERE run_id=?').get(captureRunId).n,attemptsBefore,'Image continuation consumes no quiz quality attempt');
+        }
+      }
+      captureRun=unwrap(await repository.findById(ownerId,captureRunId));
     }
     assert.equal(captureRun.state,'completed');assert.equal(captureRun.counts.acceptedQuizzes,2);assert.equal(captureIngests,4,JSON.stringify({captionCalls,decisionCalls,warnings:db.prepare('SELECT warnings_json FROM knowledge_workflow_page_image_warnings WHERE run_id=?').all(captureRunId)}));assert.equal(captionCalls,3,'One invalid caption gets a technical retry; successful captions replay');assert.equal(decisionCalls,3,'One 429 gets a technical retry; scores replay');
+    if(width===1)assert.equal(extractorCalls,1,'All continuations reuse the complete cached image manifest');
+    if(width===1)assert(mediaYields>=4,'Caption and score technical retries resume across invocation boundaries');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM knowledge_workflow_quiz_attempts WHERE run_id=? AND attempt_number>1').get(captureRunId).n,0,'Continuation preserves first quality attempts');
+    assert(!db.prepare('SELECT warnings_json FROM knowledge_workflow_page_image_warnings WHERE run_id=?').all(captureRunId).some(row=>/WorkflowInvocationYield/.test(row.warnings_json)),'Continuation is never a lost-image warning');
     const scoreReceipts=db.prepare("SELECT result_json FROM knowledge_workflow_stages WHERE run_id=? AND stage_key LIKE 'captured-image-score:%' AND json_extract(result_json,'$.ok')=1").all(captureRunId).map(row=>JSON.parse(row.result_json).value);
     assert.equal(scoreReceipts.length,2);assert(scoreReceipts.every(receipt=>receipt.requestId.startsWith('gen-dec-fixture-')&&receipt.inputTokens===111&&receipt.outputTokens===0&&receipt.costNanodollars===2000&&receipt.durationMs>=0));
     assert(imagePreflights.filter(identity=>identity.runId===captureRunId&&identity.stageKey.startsWith('captured-image-')).every(identity=>identity.role==='rights-assessor'&&identity.inputDigest&&identity.createdAt));
@@ -401,7 +424,12 @@ test("production upload runtime resumes text batches and processes selected PDF 
     const changedPoint={...capturePoints[0],summary:`${capturePoints[0].summary} Updated fixture wording.`};
     db.prepare('UPDATE extraction_knowledge_points SET point_json=? WHERE run_id=? AND knowledge_id=?').run(JSON.stringify(changedPoint),captureRunId,changedPoint.id);
     db.prepare("UPDATE knowledge_workflow_runs SET state='per-point-quiz-loop',run_json=json_set(run_json,'$.state','per-point-quiz-loop') WHERE run_id=?").run(captureRunId);
-    unwrap(await captureRuntime.execute(unwrap(await repository.findById(ownerId,captureRunId))));
+    for(let step=0;step<8;step++){
+      const replay=await captureRuntime.execute(unwrap(await repository.findById(ownerId,captureRunId)));
+      if(replay.ok)break;
+      assert.equal(width,1);
+      assert.equal(replay.error.detailKind,'WorkflowInvocationYield',JSON.stringify(replay.error));
+    }
     assert.equal(captionCalls,3,'Knowledge changes reuse successful independent captions, including a cached retry');
     assert.equal(decisionCalls,5,'Both original images are compared against the changed knowledge set');
     assert.equal(db.prepare("SELECT COUNT(*) n FROM knowledge_workflow_stages WHERE run_id=? AND stage_key GLOB 'material-image-manifest:*'").get(captureRunId).n,1,'Knowledge changes share the digest-bound original image manifest');
