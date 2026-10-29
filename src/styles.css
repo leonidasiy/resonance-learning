@@ -122,7 +122,7 @@ button { color: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 a { color: var(--action); text-underline-offset: 4px; }
 svg { max-width: 100%; }
-button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [tabindex="-1"]:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 h1, h2, h3, p, dd { overflow-wrap: anywhere; }
 h1, h2, h3 { margin: 0; text-wrap: balance; line-height: 1.15; letter-spacing: -.035em; }
 h1, h2 { font-family: var(--font-display); font-weight: 600; }
@@ -308,7 +308,7 @@ pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .library-disclosure > summary::after { content: ""; width: 8px; height: 8px; margin: 0 4px; flex-shrink: 0; border-right: 2px solid var(--action); border-bottom: 2px solid var(--action); transform: rotate(45deg); transition: transform 160ms; }
 .library-disclosure[open] > summary::after { transform: rotate(225deg); }
 .library-knowledge.library-disclosure > summary { font-size: 16px; }
-.library-knowledge ul { margin: 8px 0 0; padding: 0; list-style: none; }
+.library-knowledge ul { margin: 8px 0 0; padding: 0; list-style: none; max-height: min(420px, 60dvh); overflow-y: auto; scrollbar-color: var(--border) var(--surface); }
 .library-knowledge li { border-top: 1px solid var(--border); padding: 16px 0; }
 .library-knowledge li p { max-width: 80ch; margin: 0; color: var(--text); font-size: 15px; line-height: 1.7; }
 .processing-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); align-items: center; gap: 32px; padding-bottom: 24px; }
