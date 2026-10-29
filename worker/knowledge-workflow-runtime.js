@@ -626,6 +626,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
   const model=configuredModel();
   const rightsRegistry = new D1SourceRightsRegistry({ database: /** @type {import("./source-rights-registry-d1.js").D1DatabasePort} */ (/** @type {unknown} */ (dependencies.database)), now: dependencies.now, logger: (entry) => dependencies.logger({ event: entry.event, failureKind: entry.failureKind }) });
   let reviewChunkSize=KNOWLEDGE_REVIEW_WIDTH,quizChunkSize=QUIZ_PIPELINE_WIDTH;
+  let modelStageStarted=false;
   const stages = new D1WorkflowStageRepository({database:dependencies.database,now:dependencies.now,logger:dependencies.logger});
   const progress = new D1KnowledgeWorkflowProgressRepository({database:dependencies.database,logger:dependencies.logger});
   const content = new D1KnowledgeContentRepository({ database: /** @type {import("./knowledge-workflow-content-d1.js").D1DatabasePort} */ (dependencies.database), logger: (entry) => dependencies.logger({ event: entry.event, ownerId: entry.ownerId, runId: entry.runId, failureKind: entry.failureKind }) });
@@ -879,6 +880,13 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     return withModelSlot(async()=>{
     const active=await checkProcessingState(run);if(!active.ok)return active;
     return stages.run(run,stageKey,signature,async identity=>{
+    // At the observed CPU floor, finish saved work before admitting another quiz model stage.
+    if(quizChunkSize===1&&taskId.startsWith('quiz-')&&modelStageStarted){
+      const yieldExecution=new AgentExecutionBoundaryFailure({kind:'WorkflowInvocationYield'});
+      yieldExecution.notStarted=true;
+      throw yieldExecution;
+    }
+    modelStageStarted=true;
     dependencies.preflightModelWork?.(agentRole,{ownerId:run.ownerId,runId:run.runId,stageKey:identity.key,inputDigest:identity.inputDigest,createdAt:identity.createdAt});
     const {budgetPageUrl,...modelOptions}=options;
     let phaseSignal;
@@ -1778,6 +1786,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     /** @param {KnowledgeWorkflowRun} run @returns {Promise<Result<unknown, KnowledgeWorkflowExecutionFailure>>} */
     async execute(run) {
       if (!isKnowledgeWorkflowRun(run)) return { ok: false, error: { kind: "WorkflowCommandInvalid" } };
+      modelStageStarted=false;
       if (run.state === "source-added" || run.state === "awaiting-rights-review" || run.state === "awaiting-upload" || run.state === "paused" || run.state === "awaiting-time-limit-decision" || run.state === "retryable-failure" || run.state === "completed" || run.state === "abandoned") return { ok: true, value: { state: run.state, run } };
       // Append CPU reductions; legacy single-point checkpoints never regain wider admission.
       const cpuKey='workflow-cpu-backpressure:v1',cpuKeys=[cpuKey,'workflow-cpu-backpressure:v2:1','workflow-cpu-backpressure:v2:2'];
@@ -1921,7 +1930,8 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         // Stop admitting at the existing model request envelope; finish admitted jobs durably.
         const admissionDeadline=started+Math.max(dependencies.configSnapshots['question-generator'].limits.timeoutMs,dependencies.configSnapshots['question-evaluator'].limits.timeoutMs);
         // Bound CPU work per durable step as well as simultaneous model requests.
-        const results=await runQuizPipeline(pending.slice(0,quizChunkSize),async(point,awaitReview)=>{
+        let results;
+        try {results=await runQuizPipeline(pending.slice(0,quizChunkSize),async(point,awaitReview)=>{
           /** @type {{phase:"generation"|"review"}} */ const phase={phase:"generation"};
           const prior=failures.get(point.id);
           const processed = await successfulCheckpoint(`quiz-point-completed:${point.id}`, async () => {
@@ -1948,6 +1958,10 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           }
           return {ok:/** @type {const} */(true),value:processed.value.dispositions};
         },()=>!failed&&dependencies.nowMs()<admissionDeadline);
+        }catch(error){
+          if(!(error instanceof AgentExecutionBoundaryFailure)||error.failure.kind!=='WorkflowInvocationYield')throw error;
+          return {ok:false,error:{kind:'WorkflowInvocationYield'}};
+        }
         for(const result of results){if(!result.ok)return result;dispositions.push(...result.value);}
         dependencies.logger({event:'quiz-pipeline-success',runId:current.runId,count:results.length,durationMs:Math.max(0,dependencies.nowMs()-started)});
         return {ok:true,value:{dispositions,hasMore:pending.length>results.length,processedPoints:results.length}};

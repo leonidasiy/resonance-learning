@@ -237,6 +237,12 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
         executed = {ok:false,error:workflowExecutionFailure(error)};
       }
       if (executed.ok) return executed;
+      if(executed.error.detailKind==='WorkflowInvocationYield'){
+        const saved=await service.status({ownerId,runId});
+        if(!saved.ok)throw new Error(saved.error.kind);
+        logger({event:'knowledge-workflow-invocation-yield',ownerId,runId,stage:'executor'});
+        return {ok:true,value:{state:saved.value.state,run:saved.value}};
+      }
       const latest = await step.do(`${stepName}: reload after failure`, () => service.status({ ownerId, runId }));
       if (!latest.ok) throw new Error(latest.error.kind);
       const failureKind = executed.error.detailKind?.trim() || executed.error.kind;

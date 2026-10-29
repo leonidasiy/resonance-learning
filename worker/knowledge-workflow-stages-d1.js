@@ -71,7 +71,7 @@ export class D1WorkflowStageRepository {
           if(!retry.success)return {ok:false,error:{kind:'WorkflowStagePersistenceFailed'}};
           if(retry.meta?.changes!==1)return {ok:false,error:{kind:'WorkflowStageCallUncertain'}};
           const failures=text(row.failures_json)?JSON.parse(row.failures_json):null;
-          acquiredCleanClaim=row.provider_failures===0&&Array.isArray(failures)&&failures.length>0&&failures.every(f=>record(f)&&f.notStarted===true&&record(f.failure)&&['EvaluationCancelled','EvaluationDeadlineExceeded','EvaluationBudgetExceeded','EvaluationAccountingHalted'].includes(String(f.failure.kind)));
+          acquiredCleanClaim=row.provider_failures===0&&Array.isArray(failures)&&failures.length>0&&failures.every(f=>record(f)&&f.notStarted===true&&record(f.failure)&&['EvaluationCancelled','EvaluationDeadlineExceeded','EvaluationBudgetExceeded','EvaluationAccountingHalted','WorkflowInvocationYield'].includes(String(f.failure.kind)));
         } else if (row.status === 'claimed' && !options.resumeSafe && !(options.recoverClaimed&&text(row.created_at)&&await options.recoverClaimed({scope,key,inputDigest,createdAt:row.created_at}))) return {ok:false,error:{kind:'WorkflowStageCallUncertain'}};
         if(row.status==='completed') {
         const result = row.status === 'completed' && text(row.result_json) ? JSON.parse(row.result_json) : null;
@@ -86,7 +86,7 @@ export class D1WorkflowStageRepository {
         if (error instanceof AgentExecutionBoundaryFailure) {
           if(options.modelCall===true&&!options.resumeSafe&&!acquiredCleanClaim)error.notStarted=false;
           // Only a fresh claim or its atomically reclaimed zero-start history can prove that no prior work began.
-          if(options.modelCall===true&&!options.resumeSafe&&acquiredCleanClaim&&error.notStarted===true&&['EvaluationCancelled','EvaluationDeadlineExceeded','EvaluationBudgetExceeded','EvaluationAccountingHalted'].includes(error.failure.kind)){
+          if(options.modelCall===true&&!options.resumeSafe&&acquiredCleanClaim&&error.notStarted===true&&['EvaluationCancelled','EvaluationDeadlineExceeded','EvaluationBudgetExceeded','EvaluationAccountingHalted','WorkflowInvocationYield'].includes(error.failure.kind)){
             const at=this.#now();
             try {
             const saved=await this.#database.prepare("UPDATE knowledge_workflow_stages SET status='not-started',result_json=?,completed_at=?,failures_json=json_insert(failures_json,'$[#]',json(?)) WHERE owner_id=? AND run_id=? AND stage_key=? AND input_digest=? AND status='claimed'").bind(JSON.stringify({ok:false,error:error.failure}),at,JSON.stringify({occurredAt:at,failure:error.failure,notStarted:true}),scope.ownerId,scope.runId,key,inputDigest).run();

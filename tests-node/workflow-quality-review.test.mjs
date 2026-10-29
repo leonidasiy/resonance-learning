@@ -344,6 +344,43 @@ test('crash after claim and concurrent resumes never repeat an uncertain paid st
   finish({ok:true,value:{draft:'saved'}});assert.equal((await pending).ok,true);assert.equal(calls,1);db.close();
 });
 
+test('cooperative invocation yields preserve zero-dispatch proof and resume the same paid identity',async()=>{
+  const {db,repository}=await stages(),scope={ownerId:'owner',runId:'run'},key='question-evaluator:yielded';
+  const row=()=>db.prepare('SELECT * FROM knowledge_workflow_stages WHERE stage_key=?').get(key);
+  let dispatched=0;
+  try {
+    for(let invocation=0;invocation<2;invocation++) {
+      const yieldBoundary=new AgentExecutionBoundaryFailure({kind:'WorkflowInvocationYield'});
+      yieldBoundary.notStarted=true;
+      await assert.rejects(repository.run(scope,key,'input',async()=>{throw yieldBoundary;},{modelCall:true}),error=>error===yieldBoundary&&error.notStarted===true);
+      const saved=row();
+      assert.equal(saved.status,'not-started');assert.equal(saved.provider_failures,0);
+      assert.deepEqual(JSON.parse(saved.failures_json).map(entry=>({kind:entry.failure.kind,notStarted:entry.notStarted})),Array.from({length:invocation+1},()=>({kind:'WorkflowInvocationYield',notStarted:true})));
+    }
+    const original=row(),result={ok:true,value:{review:'accepted'}};
+    assert.deepEqual(await repository.run(scope,key,'input',async()=>{dispatched++;return result;},{modelCall:true}),result);
+    const completed=row();
+    assert.equal(completed.status,'completed');assert.equal(completed.created_at,original.created_at);
+    assert.equal(completed.input_digest,original.input_digest);assert.equal(completed.provider_failures,0);
+    assert.equal(completed.failures_json,original.failures_json);
+    assert.deepEqual(await repository.run(scope,key,'input',async()=>assert.fail('Completed stage must replay'),{modelCall:true}),result);
+    assert.equal(dispatched,1);
+  } finally {db.close();}
+});
+
+test('cooperative yield cannot relabel an existing uncertain paid claim as zero-dispatch',async()=>{
+  const {db,repository}=await stages(),scope={ownerId:'owner',runId:'run'},key='question-evaluator:uncertain';
+  try {
+    db.prepare("INSERT INTO knowledge_workflow_stages(owner_id,run_id,stage_key,input_digest,status,created_at) VALUES(?,?,?,?,'claimed',?)").run(scope.ownerId,scope.runId,key,'input','2026-10-09T00:00:00.000Z');
+    const row=()=>db.prepare('SELECT * FROM knowledge_workflow_stages WHERE stage_key=?').get(key),original=row();
+    assert.deepEqual(await repository.run(scope,key,'input',async()=>assert.fail('Uncertain claim cannot dispatch'),{modelCall:true}),{ok:false,error:{kind:'WorkflowStageCallUncertain'}});
+    const yieldBoundary=new AgentExecutionBoundaryFailure({kind:'WorkflowInvocationYield'});
+    yieldBoundary.notStarted=true;
+    await assert.rejects(repository.run(scope,key,'input',async()=>{throw yieldBoundary;},{modelCall:true,recoverClaimed:async()=>true}),error=>error===yieldBoundary&&error.notStarted===false);
+    assert.deepEqual(row(),original);
+  } finally {db.close();}
+});
+
 function quizzes(overrides={}){
   const audit=[],published=[],dropped=[];
   const draft={id:'draft',knowledgeId:point.id,knowledgeRevision:1,kind:'single-choice',prompt:'Which specific relationship is supported?',options:['Correct relationship','Incorrect relationship'],answer:'Correct relationship',citedEvidenceUrls:['https://example.test/']};

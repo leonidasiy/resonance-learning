@@ -15,7 +15,7 @@ import { readFailedQuizItems,exhaustedQuizTechnicalFailure } from '../worker/kno
 import {AgentExecutionBoundaryFailure} from '../src/features/knowledge-workflows/harness.js';
 import { WEBPAGE_IMAGE_POLICY } from '../worker/webpage-image-budget.js';
 
-for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 'model503', 'model200', 'model401', 'stopped-before-acquisition','expired-quiz-clock','quiz-review503','quiz-generator503','quiz-review-malformed','quiz-review401','quiz-review402','classifier503-success','classifier-malformed-success','classifier503-exhausted','classifier-malformed-exhausted','classifier401','classifier402','classifier-bounded','classifier-critical','classifier-mixed-success','quiz-review-resume-success']) {
+for (const failureMode of ['quiz-invocation-yield','quiz-invocation-yield-repair', 'chunk-bound', 'material-coverage', 'review-output', 'model503', 'model200', 'model401', 'stopped-before-acquisition','expired-quiz-clock','quiz-review503','quiz-generator503','quiz-review-malformed','quiz-review401','quiz-review402','classifier503-success','classifier-malformed-success','classifier503-exhausted','classifier-malformed-exhausted','classifier401','classifier402','classifier-bounded','classifier-critical','classifier-mixed-success','quiz-review-resume-success']) {
  test(failureMode==='chunk-bound'?'runtime checkpoints after three quiz jobs without refilling a durable step':failureMode==='material-coverage'?'runtime bounds supplied material coverage without inventing support':failureMode==='expired-quiz-clock'?'runtime continues normal quizzes after the extraction window expires without renewing it':failureMode.startsWith('classifier')?`runtime classification honors one four-attempt combined technical budget: ${failureMode}`:failureMode.startsWith('quiz-') ? `runtime isolates ${failureMode} and approved retry preserves source pages, drafts and healthy quizzes` : failureMode === 'stopped-before-acquisition' ? 'runtime fences provider calls after an authoritative run stop' : failureMode === 'model401' ? 'runtime stops on credential rejection without local page skipping or retry' : `runtime isolates ${failureMode} and approved retry processes only the failed page with fresh durable model identities`, async () => {
   const db = new DatabaseSync(':memory:');
   try {
@@ -51,14 +51,14 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
     const configSnapshots = {};
     for (const role of ['rights-assessor', 'knowledge-scraper', 'question-generator', 'question-evaluator']) configSnapshots[role] = unwrap(await loader.load({ source: (await readFile(new URL(`../agent-config/${role}.yaml`, import.meta.url), 'utf8')).replace(/name: [^\n]+/, `name: synthetic/${role}`), expectedRole: role }));
     const sections = (failureMode==='chunk-bound'||failureMode.startsWith('quiz-')?[1,2,3,4]:[1, 2, 3]).map(number => ({ id: `page-${number}`, title: `Page ${number}`, locator: `page:${number}`, text: `Synthetic distinct relationship ${number}.` }));
-    const material = { ownerId, runId, sourceId, sourceRevision: 1, sourceUrl, mediaType: 'application/pdf', fileName: 'offline-fixture.pdf', contentDigest: 'sha256:offline-fixture', sections, media: [], provenance: { kind: 'authorized-user-material', attestationReference: 'offline-fixture', basis: 'test-owned', processingAllowed: true } };
+    const material = { ownerId, runId, sourceId, sourceRevision: 1, sourceUrl, mediaType: failureMode.startsWith('quiz-invocation-yield')?'text/plain':'application/pdf', fileName: 'offline-fixture.pdf', contentDigest: 'sha256:offline-fixture', sections, media: [], provenance: { kind: 'authorized-user-material', attestationReference: 'offline-fixture', basis: 'test-owned', processingAllowed: true } };
     let run = unwrap(await service.createRun({ ownerId, sourceId, sourceRevision: 1, canonicalSourceIdentity: sourceUrl, contentSignature: material.contentDigest, idempotencyKey: runId, sourceOrigin: 'private-document', configDigests: Object.fromEntries(Object.entries(configSnapshots).map(([role, config]) => [role, config.digest])) })).run;
     unwrap(await materials.persist({ ownerId, runId, materialId: 'failed-unit-fixture-material', idempotencyKey: runId, fingerprint: material.contentDigest, objectKey: 'offline-fixture-only', material, createdAt: clock() }));
     run = unwrap(await service.attachMaterial({ ownerId, runId, materialId: 'failed-unit-fixture-material' }));
     db.prepare('INSERT INTO library_sources (owner_id,source_id,submitted_url,canonical_url,title,description,adapter_json,identity_evidence_json,state,approved_at,updated_at,revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(ownerId, sourceId, sourceUrl, sourceUrl, 'Offline failure-isolation fixture', 'Constructed test input', JSON.stringify({ kind: 'private-document' }), '[]', 'active', clock(), clock(), 1);
     let approvedRetry = false,quizStillInvalid=false,replayInterrupted=false;
     let quizInterrupted = false, quizResumed = false, expiredDeadline;
-    let modelCalls = 0,classifierCalls=0,classifierPreflights=0;
+    let modelCalls = 0,classifierCalls=0,classifierPreflights=0,importanceCalls=0,closed=0;
     const classifierBodies=[];
     const extractedPages = [], reviewedPages = [], generatedQuizzes = [],evaluatedQuizzes=[];
     const transport = async (_url, init) => {
@@ -97,9 +97,11 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
         output={notes:'Constructed progress.',candidates:[{summary:block.text,normalizedHash:id,evidenceAnchors:[{reference:block.citationReference,clause:block.text}],coverageGoalIds:failureMode==='material-coverage'?['observed']:[],mediaCandidates:[]}]};
       }else if(task.operation==='normalize-webpage-claim-boundaries'){
         output={notes:task.notes,additionalCandidates:[],reviews:task.candidates.map(candidate=>({sourceNormalizedHash:candidate.normalizedHash,relationshipUnits:syntheticRelationshipUnits([candidate]),candidates:[candidate]})),blockCoverage:task.sourceBlocks.map(block=>({blockId:block.id,disposition:'candidates',candidateHashes:task.candidates.map(c=>c.normalizedHash),reason:'Constructed supported relationship.'}))};
-      }else if(task.pairedQuiz){output={targets:task.pairedQuiz.canonicalAnswers.map(answer=>({answer,important:true,reason:'Constructed central target.'})),feedback:'Constructed importance approval.'};
+      }else if(task.pairedQuiz){importanceCalls++;output={targets:task.pairedQuiz.canonicalAnswers.map(answer=>({answer,important:true,reason:'Constructed central target.'})),feedback:'Constructed importance approval.'};
       } else if (task.draft) {
         evaluatedQuizzes.push(task.knowledge.id);
+        if(failureMode==='quiz-invocation-yield-repair'&&task.knowledge.summary==='Synthetic distinct relationship 1.'&&task.attempt===1)output={score:6,reasons:['Constructed revision required.'],feedback:'Repair the same supported target.',groundingProblems:[],knowledgeGroundingProblems:[]};
+        else
         if(failureMode==='quiz-review-resume-success'&&task.knowledge.summary==='Synthetic distinct relationship 2.'&&evaluatedQuizzes.filter(id=>id.includes('page-2')).length===4)output={score:9,reasons:['Constructed recovery.'],feedback:'Constructed acceptance.',groundingProblems:[],knowledgeGroundingProblems:[]};
         else if((!approvedRetry||quizStillInvalid)&&failureMode.startsWith('quiz-review')&&task.knowledge.summary==='Synthetic distinct relationship 2.') {
           if(failureMode==='quiz-review-malformed')output={score:0};
@@ -138,7 +140,7 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
           }
         }
       },
-      database, fetch: transport, browser: { readPage: forbidden, readRobots: forbidden, screenshot: forbidden, close: async () => ({ ok: true, value: null }) },
+      database, fetch: transport, browser: { readPage: forbidden, readRobots: forbidden, screenshot: forbidden, close: async () => {closed++;return { ok: true, value: null };} },
       apiKey: 'offline-fixture-only', endpoint: 'https://example.test/model', now: clock, nowMs: Date.now, logger, configSnapshots, material: materials,
       imageSearch: { search: forbidden }, fallbackManifest: { entries: [], resolve: forbidden },
       transition: async ({ run: current, nextState, ...rest }) => {
@@ -197,6 +199,27 @@ for (const failureMode of ['chunk-bound', 'material-coverage', 'review-output', 
       }
       assert.equal(run.state, 'completed');
     };
+    if(failureMode.startsWith('quiz-invocation-yield')){
+      const stamp=clock();
+      db.prepare("INSERT INTO knowledge_workflow_stages (owner_id,run_id,stage_key,input_digest,status,result_json,created_at,completed_at) VALUES (?,?,?,?,'completed',?,?,?)").run(ownerId,runId,'workflow-cpu-backpressure:v1','workflow-cpu-backpressure:v1',JSON.stringify({ok:true,value:null}),stamp,stamp);
+      let yields=0,invocations=0;
+      for(;invocations<24&&run.state!=='completed';invocations++){
+        if(run.state==='awaiting-time-limit-decision')run=unwrap(await service.control({ownerId,runId,expectedRevision:run.revision,action:'resume',idempotencyKey:`yield-fixture-${run.revision}`}));
+        const before=generatedQuizzes.length+evaluatedQuizzes.length+importanceCalls,closes=closed;
+        const result=await runtime().execute(run);
+        assert(generatedQuizzes.length+evaluatedQuizzes.length+importanceCalls-before<=1,'At CPU width one, a fresh invocation admits at most one quiz model stage.');
+        assert.equal(closed,closes+1,'Cooperative yield still closes browser resources.');
+        run=unwrap(await repository.findById(ownerId,runId));
+        if(!result.ok){assert.equal(result.error.detailKind,'WorkflowInvocationYield',JSON.stringify({invocations,runState:run.state,generatedQuizzes,extractedPages,error:result.error}));yields++;assert.equal(run.failureKind,null);}
+        assert.deepEqual(unwrap(await readFailedQuizItems(database,run)),[],'Yield does not exhaust a quiz attempt.');
+      }
+      assert.equal(run.state,'completed');assert(yields>=6);assert.equal(run.counts.acceptedQuizzes,3);
+      const repaired=failureMode.endsWith('-repair');
+      assert.deepEqual(generatedQuizzes.toSorted(),repaired?['page-1','page-1','page-2','page-3']:['page-1','page-2','page-3']);assert.equal(importanceCalls,repaired?4:3);assert.equal(evaluatedQuizzes.length,repaired?4:3);
+      assert(db.prepare('SELECT knowledge_id,attempt_number FROM knowledge_workflow_quizzes').all().every(row=>row.attempt_number===(repaired&&row.knowledge_id.endsWith('page-1')?2:1)),'Only a real quality rejection advances the quality attempt.');
+      assert.equal(db.prepare("SELECT count(*) AS n FROM knowledge_workflow_stages WHERE provider_failures>0 AND stage_key LIKE 'question-%quiz-%'").get().n,0);
+      const before=modelCalls;unwrap(await runtime().execute(run));assert.equal(modelCalls,before);return;
+    }
     if(failureMode==='expired-quiz-clock'){
       for(let step=0;step<8&&run.state!=='completed';step++){
         if(run.state==='awaiting-time-limit-decision')run=unwrap(await service.advance({ownerId,runId,expectedRevision:run.revision,nextState:'extraction-loop'}));
