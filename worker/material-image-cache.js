@@ -9,6 +9,9 @@ const receiptVersion='material-image-cache-v1';
 /** @typedef {import('../src/features/knowledge-workflows/url-capture.js').CapturedImage} CapturedImage */
 /** @typedef {{ownerId:string,runId:string,sourceId:string,sourceRevision:number}} Scope */
 /** @typedef {{digest:string,byteLength:number}} Original */
+/** @typedef {Omit<CapturedImage,'bytes'> & {digest:string}} MaterialImageMetadata */
+/** @typedef {{images:readonly MaterialImageMetadata[],read:(path:string)=>Promise<Result<CapturedImage>>}} MaterialImageInventory */
+/** @typedef {{material:import('../src/features/knowledge-workflows/material.js').AuthorizedMaterial,bytes:Uint8Array,scope:Scope,database:import('./knowledge-workflow-content-d1.js').D1DatabasePort,stages:import('./knowledge-workflow-stages-d1.js').D1WorkflowStageRepository,store:Pick<import('./source-content-r2.js').R2SourceContentStore,'read'|'stage'|'remove'>,extract?:typeof extractMaterialImages}} MaterialImageDependencies */
 /** @typedef {Scope & {version:typeof receiptVersion,inputDigest:string,manifestDigest:string,images:Original[]}} Receipt */
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:{kind:string}}} Result */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -34,9 +37,9 @@ export async function materialImageObjectKeys(receipt) {
 
 /** Original bytes stay in private R2. The resume-safe stage journals their identities
  * before writes, allowing deletion and interrupted-write recovery without model calls.
- * @param {{material:import('../src/features/knowledge-workflows/material.js').AuthorizedMaterial,bytes:Uint8Array,scope:Scope,database:import('./knowledge-workflow-content-d1.js').D1DatabasePort,stages:import('./knowledge-workflow-stages-d1.js').D1WorkflowStageRepository,store:Pick<import('./source-content-r2.js').R2SourceContentStore,'read'|'stage'|'remove'>,extract?:typeof extractMaterialImages}} dependencies
- * @returns {Promise<Result<readonly CapturedImage[]>>} */
-export async function loadMaterialImages(dependencies) {
+ * @param {MaterialImageDependencies} dependencies
+ * @returns {Promise<Result<MaterialImageInventory>>} */
+export async function openMaterialImages(dependencies) {
  const {material,bytes,scope,database,stages,store}=dependencies,extract=dependencies.extract??extractMaterialImages;
  const inputDigest=await imageHash(new TextEncoder().encode(JSON.stringify({version:MATERIAL_IMAGE_EXTRACTOR_VERSION,...scope,sourceUrl:material.sourceUrl,mediaType:material.mediaType,contentDigest:material.contentDigest.replace(/^sha256:/u,''),locators:material.sections.map(section=>section.locator)})));
  /** @returns {Promise<boolean>} */
@@ -65,6 +68,7 @@ export async function loadMaterialImages(dependencies) {
   if(!isMaterialImageReceipt(journal.value,scope,inputDigest))return failed('MaterialImageCacheReceiptInvalid');
   const receipt=journal.value,keys=await materialImageObjectKeys(receipt);
   const storedManifest=await read(keys.manifest);if(!storedManifest.ok)return storedManifest;
+  let manifestBytes=storedManifest.value;
   if(storedManifest.value===null){
    if(prepared===undefined){const rebuilt=await prepare();if(!rebuilt.ok)return rebuilt;if(JSON.stringify(rebuilt.value)!==JSON.stringify(receipt))return failed('MaterialImageCacheExtractionChanged');}
    const rebuilt=/** @type {NonNullable<typeof prepared>} */(prepared);
@@ -80,24 +84,45 @@ export async function loadMaterialImages(dependencies) {
    if(!await active())return failed('MaterialImageCacheUnavailable');
    const saved=await write(keys.manifest,rebuilt.manifest,'text/plain',receipt.manifestDigest);if(!saved.ok)return saved;
    if(!await active()){const removed=await store.remove(keys.manifest);return removed.ok?failed('MaterialImageCacheUnavailable'):removed;}
-   return {ok:true,value:rebuilt.images};
+   manifestBytes=rebuilt.manifest;
   }
-  const manifestBytes=storedManifest.value;
+  if(manifestBytes===null)return failed('MaterialImageCacheMissing');
   if(await imageHash(manifestBytes)!==receipt.manifestDigest)return failed('MaterialImageCacheManifestChanged');
   const manifest=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(manifestBytes));
   if(!Array.isArray(manifest)||manifest.length!==receipt.images.length)return failed('MaterialImageCacheManifestInvalid');
-  /** @type {CapturedImage[]} */const images=[];
+  /** @type {MaterialImageMetadata[]} */const images=[];
   /** @type {Map<string,Uint8Array>} */const originals=new Map();
+  if(prepared!==undefined)for(const [index,image] of prepared.images.entries())originals.set(keys.images[index],image.bytes);
   const paths=new Set();
   for(const [index,image] of manifest.entries()){
    if(!record(image)||Object.keys(image).sort().join(',')!=='alt,byteLength,caption,context,digest,mediaType,path,url'||!['path','url','caption','alt','context','mediaType'].every(key=>typeof image[key]==='string')||!image.path||paths.has(image.path)||image.digest!==receipt.images[index].digest||image.byteLength!==receipt.images[index].byteLength)return failed('MaterialImageCacheManifestInvalid');
    paths.add(image.path);
-   const key=keys.images[index];let original=originals.get(key);
-   if(original===undefined){const stored=await read(key);if(!stored.ok)return stored;if(stored.value===null)return failed('MaterialImageCacheMissing');original=stored.value;if(original.length!==image.byteLength||await imageHash(original)!==image.digest)return failed('MaterialImageCacheBytesChanged');originals.set(key,original);}
-   if(original.length!==image.byteLength||imageSignature(original)!==image.mediaType)return failed('MaterialImageCacheBytesChanged');
-   const {digest:originalDigest,byteLength,...metadata}=image;
-   images.push({.../** @type {Omit<CapturedImage,'bytes'>} */(metadata),bytes:original.slice()});
+   const {byteLength,...metadata}=image;
+   images.push(Object.freeze(/** @type {MaterialImageMetadata} */(metadata)));
   }
-  return await active()?{ok:true,value:images}:failed('MaterialImageCacheUnavailable');
+  /** @param {string} path @returns {Promise<Result<CapturedImage>>} */
+  async function readImage(path){
+   try{
+    if(!await active())return failed('MaterialImageCacheUnavailable');
+    const index=images.findIndex(image=>image.path===path);
+    if(index<0)return failed('MaterialImageCacheMissing');
+    const image=images[index],expected=receipt.images[index],key=keys.images[index];let original=originals.get(key);
+    if(original===undefined){const stored=await read(key);if(!stored.ok)return stored;if(stored.value===null)return failed('MaterialImageCacheMissing');original=stored.value;}
+    if(original.length!==expected.byteLength||await imageHash(original)!==expected.digest||imageSignature(original)!==image.mediaType)return failed('MaterialImageCacheBytesChanged');
+    originals.set(key,original);
+    if(!await active())return failed('MaterialImageCacheUnavailable');
+    const {digest:originalDigest,...metadata}=image;
+    return {ok:true,value:{...metadata,bytes:original.slice()}};
+   }catch(error){if(!(error instanceof Error))throw error;return failed('MaterialImageCachePersistenceFailed');}
+  }
+  return await active()?{ok:true,value:{images:Object.freeze(images),read:readImage}}:failed('MaterialImageCacheUnavailable');
  }catch(error){if(!(error instanceof Error))throw error;return failed('MaterialImageCachePersistenceFailed');}
+}
+
+/** @param {MaterialImageDependencies} dependencies @returns {Promise<Result<readonly CapturedImage[]>>} */
+export async function loadMaterialImages(dependencies) {
+ const opened=await openMaterialImages(dependencies);if(!opened.ok)return opened;
+ const images=[];
+ for(const metadata of opened.value.images){const image=await opened.value.read(metadata.path);if(!image.ok)return image;images.push(image.value);}
+ return {ok:true,value:images};
 }

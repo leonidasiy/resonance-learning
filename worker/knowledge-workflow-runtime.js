@@ -13,7 +13,7 @@ import { createJevDecisionModel, JEV_GRADER_CONFIGURATION } from './jev-answer-g
 import { capturedImageCaptionPrompt, capturedImageCaptionSchema, isCapturedImageCaption, capturedImageDecision, selectCapturedImages } from './url-capture-association.js';
 import { URL_CAPTURE_TYPE } from '../src/features/knowledge-workflows/url-capture.js';
 import { extractMaterialImages } from '../src/features/knowledge-workflows/material.js';
-import { loadMaterialImages, MATERIAL_IMAGE_EXTRACTOR_VERSION } from './material-image-cache.js';
+import { openMaterialImages, MATERIAL_IMAGE_EXTRACTOR_VERSION } from './material-image-cache.js';
 import { auditMaterialImageCoverage } from './material-image-coverage.js';
 import { requestCoveredMaterialText } from './material-text-coverage.js';
 import { requestWebpageFacts, createWebpageAttemptPolicy, isWebpageEvidence, webpageFactsPrompt, knowledgeSelectionPolicy } from './webpage-facts.js';
@@ -1477,15 +1477,25 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       const imageStarted=dependencies.nowMs();
       const imageProgress=await progress.save({ownerId:run.ownerId,runId:run.runId,stage:'Extracting embedded source images',updatedAt:dependencies.now()});if(!imageProgress.ok)return imageProgress;
       dependencies.logger({event:'knowledge-workflow-material-images-entry',ownerId:run.ownerId,runId:run.runId,stage:'media'});
-      const captured=store!==undefined
-        ?await loadMaterialImages({material,bytes:original.value,scope:{ownerId:run.ownerId,runId:run.runId,sourceId:run.sourceId,sourceRevision:run.sourceRevision},database:dependencies.database,stages,store,extract:dependencies.extractMaterialImages})
-        :await (dependencies.extractMaterialImages??extractMaterialImages)(material,original.value);
+      let captured;
+      if(store!==undefined)captured=await openMaterialImages({material,bytes:original.value,scope:{ownerId:run.ownerId,runId:run.runId,sourceId:run.sourceId,sourceRevision:run.sourceRevision},database:dependencies.database,stages,store,extract:dependencies.extractMaterialImages});
+      else {
+        const extracted=await (dependencies.extractMaterialImages??extractMaterialImages)(material,original.value);
+        captured=extracted.ok?{ok:/** @type {const} */(true),value:{
+          images:await Promise.all(extracted.value.map(async({bytes,...image})=>({...image,digest:await imageHash(bytes)}))),
+          async read(/** @type {string} */ path){
+            const image=extracted.value.find(image=>image.path===path);
+            return image?{ok:/** @type {const} */(true),value:image}:{ok:/** @type {const} */(false),error:{kind:'MaterialImageCacheMissing'}};
+          },
+        }}:extracted;
+      }
       if(!captured.ok){
         if(material.mediaType===URL_CAPTURE_TYPE||/^(UploadedImageHashMismatch|BrowserRun|MaterialImageBrowser|MaterialImageCache|R2|SourceContent)/u.test(captured.error.kind))return captured;
         dependencies.logger({event:'knowledge-workflow-material-images-failure',ownerId:run.ownerId,runId:run.runId,stage:'media',failureKind:captured.error.kind});
         return content.savePageImageWarnings({ownerId:run.ownerId,runId:run.runId,pageUrl:run.canonicalSourceIdentity,warnings:[`Image warning: ${captured.error.kind}. Text retained.`]});
       }
-      dependencies.logger({event:'knowledge-workflow-material-images-success',ownerId:run.ownerId,runId:run.runId,stage:'media',durationMs:Math.max(0,dependencies.nowMs()-imageStarted),count:captured.value.length});
+      const inventory=captured.value;
+      dependencies.logger({event:'knowledge-workflow-material-images-success',ownerId:run.ownerId,runId:run.runId,stage:'media',durationMs:Math.max(0,dependencies.nowMs()-imageStarted),count:inventory.images.length});
       /** @type {string[]} */const warnings=[];
       /** @type {import('./url-capture-association.js').ImageScores[]} */const scores=[];
       const decision=createJevDecisionModel({...(dependencies.gradingModel===undefined?{}:{chat:{endpoint:dependencies.endpoint,model:dependencies.gradingModel,apiStyle:dependencies.apiStyle??"openrouter"}}),apiKey:dependencies.apiKey,configuration:{...JEV_GRADER_CONFIGURATION,acceptanceThreshold:0.8},now:dependencies.nowMs,fetch:dependencies.fetch,timeoutMs:10_000,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})});
@@ -1498,17 +1508,18 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
           dependencies.logger({event:'knowledge-workflow-technical-retry',ownerId:run.ownerId,runId:run.runId,stage:'media',failureKind:result.error.kind});
         }
       }
-      for(const [index,image] of captured.value.entries()){
-        const saved=await progress.save({ownerId:run.ownerId,runId:run.runId,stage:`Captioning source images (${index+1} of ${captured.value.length})`,updatedAt:dependencies.now()});if(!saved.ok)return saved;
+      for(const [index,image] of inventory.images.entries()){
+        const saved=await progress.save({ownerId:run.ownerId,runId:run.runId,stage:`Captioning source images (${index+1} of ${inventory.images.length})`,updatedAt:dependencies.now()});if(!saved.ok)return saved;
         const caption=await retry(async attempt=>{
           const config=dependencies.configSnapshots['rights-assessor'],baseProtocol=dependencies.modelProtocols?.['rights-assessor'];
-          const command={role:/** @type {const} */('source-assessor'),reasoningEffort:/** @type {const} */('low'),systemPrompt:capturedImageCaptionPrompt,input:{operation:'caption-captured-image',imageId:image.path,sourceCaption:image.caption,alt:image.alt,context:image.context},maxOutputTokens:2048,attachments:[{id:image.path,mediaType:/** @type {'image/png'|'image/jpeg'|'image/webp'|'image/gif'} */(image.mediaType),bytes:image.bytes}],responseSchema:capturedImageCaptionSchema};
-          const digest=await imageHash(new TextEncoder().encode(JSON.stringify({...command,attachments:[{id:image.path,mediaType:image.mediaType,digest:await imageHash(image.bytes)}],config:config.digest,protocol:baseProtocol,endpoint:dependencies.endpoint,apiStyle:dependencies.apiStyle??'openrouter'})));
+          const command={role:/** @type {const} */('source-assessor'),reasoningEffort:/** @type {const} */('low'),systemPrompt:capturedImageCaptionPrompt,input:{operation:'caption-captured-image',imageId:image.path,sourceCaption:image.caption,alt:image.alt,context:image.context},maxOutputTokens:2048,attachments:undefined,responseSchema:capturedImageCaptionSchema};
+          const digest=await imageHash(new TextEncoder().encode(JSON.stringify({...command,attachments:[{id:image.path,mediaType:image.mediaType,digest:image.digest}],config:config.digest,protocol:baseProtocol,endpoint:dependencies.endpoint,apiStyle:dependencies.apiStyle??'openrouter'})));
           const result=await stages.run(run,`captured-image-caption:${digest}:${attempt}`,digest,async identity=>withModelSlot(async()=>{
             admitModelStage(true);
             const active=await checkProcessingState(run);if(!active.ok)return active;
+            const original=await inventory.read(image.path);if(!original.ok)return original;
             dependencies.preflightModelWork?.('rights-assessor',{ownerId:run.ownerId,runId:run.runId,stageKey:identity.key,inputDigest:identity.inputDigest,createdAt:identity.createdAt});
-            return createSourceDecisionModel({apiStyle:dependencies.apiStyle,configuration:config,apiKey:dependencies.apiKey,endpoint:dependencies.endpoint,protocol:baseProtocol,maximumInputCharacters:3_000_000,fetch:dependencies.fetch,now:dependencies.nowMs,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})}).generate(command);
+            return createSourceDecisionModel({apiStyle:dependencies.apiStyle,configuration:config,apiKey:dependencies.apiKey,endpoint:dependencies.endpoint,protocol:baseProtocol,maximumInputCharacters:3_000_000,fetch:dependencies.fetch,now:dependencies.nowMs,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'media'})}).generate({...command,attachments:[{id:image.path,mediaType:/** @type {'image/png'|'image/jpeg'|'image/webp'|'image/gif'} */(image.mediaType),bytes:original.value.bytes}]});
           }),{modelCall:true,maximumProviderAttempts:1,cacheProviderRefusals:true});
           return result.ok?(isCapturedImageCaption(result.value.output)?{ok:true,value:result.value.output}:{ok:false,error:{kind:'CapturedImageCaptionInvalid'}}):result;
         });
@@ -1526,7 +1537,8 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       const associations=selectCapturedImages(points,scores);
       for(const point of points){
         const selected=associations.get(point.id);if(!selected)continue;
-        const {image}=selected;
+        const selectedImage=await inventory.read(selected.image.path);if(!selectedImage.ok)return selectedImage;
+        const image=selectedImage.value;
         // Embedded figures illustrate independently verified source text; they do not supply factual grounding.
         const binding={kind:/** @type {const} */('webpage-support'),purpose:/** @type {const} */('illustration'),ownerId:run.ownerId,runId:run.runId,sourceRevision:run.sourceRevision,imageId:image.path,originalDigest:await imageHash(image.bytes),evidence:selected.caption.description,factHash:await imageHash(new TextEncoder().encode(JSON.stringify({summary:point.summary,normalizedHash:point.normalizedHash,evidenceAnchors:point.evidenceAnchors})))};
         if(!dependencies.media?.ingestBytes){warnings.push('Image warning: MediaBytesUnavailable. Text retained.');continue;}

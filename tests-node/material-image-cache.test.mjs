@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile,readdir} from 'node:fs/promises';
 import {imageHash} from '../worker/webpage-images.js';
-import {loadMaterialImages,materialImageObjectKeys} from '../worker/material-image-cache.js';
+import {loadMaterialImages,openMaterialImages,materialImageObjectKeys} from '../worker/material-image-cache.js';
 import {D1WorkflowStageRepository} from '../worker/knowledge-workflow-stages-d1.js';
 import {createMaterialImageContentStore} from '../worker/material-image-content.js';
 import {createKnowledgeWorkflowCleanup} from '../worker/knowledge-workflow-cleanup.js';
@@ -28,11 +28,45 @@ async function fixture(){
  let extractions=0;
  const extract=async()=>{extractions++;return {ok:true,value:fixtureImages.map(image=>({...image,bytes:image.bytes.slice()}))};};
  const load=(options={})=>loadMaterialImages({scope,material,bytes,database,stages:stages(),store,extract,...options});
+ const open=(options={})=>openMaterialImages({scope,material,bytes,database,stages:stages(),store,extract,...options});
  const run={...scope,canonicalSourceIdentity:sourceUrl,state:'extraction-loop'};
  const cleanup=createKnowledgeWorkflowCleanup({database,bucket,materialImageContent:store,now,logger:e=>logs.push(e),workflowRepository:{listBySource:async()=>({ok:true,value:[run]}),invalidateReuse:async()=>({ok:true,value:null}),markAbandoned:async()=>{db.prepare("UPDATE knowledge_workflow_runs SET state='abandoned'").run();return {ok:true,value:null};}}});
  const receipt=()=>JSON.parse(db.prepare("SELECT result_json FROM knowledge_workflow_stages WHERE stage_key GLOB 'material-image-manifest:*'").get().result_json).value;
- return {db,database,objects,material,bytes,load,receipt,cleanup,run,extract,store,logs,get puts(){return puts;},get extractions(){return extractions;},set putHook(v){putHook=v;},set putFailure(v){putFailure=v;}};
+ return {db,database,objects,material,bytes,load,open,receipt,cleanup,run,extract,store,logs,get puts(){return puts;},get extractions(){return extractions;},set putHook(v){putHook=v;},set putFailure(v){putFailure=v;}};
 }
+
+test('opening a replay reads only its validated manifest, then restores only chosen pixels',async()=>{
+ const f=await fixture();try{
+  const distinct=fixtureImages.map((image,index)=>({...image,bytes:new Uint8Array([...image.bytes,index])}));
+  assert((await f.load({extract:async()=>({ok:true,value:distinct})})).ok);
+  const keys=await materialImageObjectKeys(f.receipt()),reads=[];
+  f.objects.get(keys.images[1]).bytes[0]^=1;
+  const store={...f.store,read:async(owner,key)=>{reads.push(key);return f.store.read(owner,key);}};
+  const opened=await f.open({store,extract:async()=>assert.fail('Lazy replay must not re-extract')});assert(opened.ok);
+  assert.deepEqual(reads,[keys.manifest]);assert.equal(opened.value.images.length,2);
+  for(const [index,image] of opened.value.images.entries()){
+   const {bytes,...metadata}=distinct[index];assert.deepEqual(image,{...metadata,digest:await imageHash(bytes)});assert(!('bytes'in image));
+  }
+  assert.deepEqual(await opened.value.read(distinct[0].path),{ok:true,value:distinct[0]});
+  assert.deepEqual(reads,[keys.manifest,keys.images[0]]);
+  assert.deepEqual(await opened.value.read(distinct[0].path),{ok:true,value:distinct[0]});
+  assert.deepEqual(reads,[keys.manifest,keys.images[0]],'One inventory reuses verified originals');
+  assert.deepEqual(await opened.value.read(distinct[1].path),{ok:false,error:{kind:'MaterialImageCacheBytesChanged'}});
+  assert.deepEqual(reads,[keys.manifest,keys.images[0],keys.images[1]]);
+  assert.equal((await opened.value.read('unknown-path')).error.kind,'MaterialImageCacheMissing');
+ }finally{f.db.close();}
+});
+
+test('fresh inventories reuse extracted pixels and lazy reads honor abandonment before storage access',async()=>{
+ const f=await fixture();try{
+  const reads=[],store={...f.store,read:async(owner,key)=>{reads.push(key);return f.store.read(owner,key);}};
+  const opened=await f.open({store});assert(opened.ok);reads.length=0;
+  const first=await opened.value.read(fixtureImages[0].path);assert.deepEqual(first,{ok:true,value:fixtureImages[0]});assert.deepEqual(reads,[]);
+  first.value.bytes[0]=0;assert.deepEqual(await opened.value.read(fixtureImages[0].path),{ok:true,value:fixtureImages[0]});
+  assert((await f.cleanup.abandonRun({run:f.run,reason:'cancelled'})).ok);
+  assert.deepEqual(await opened.value.read(fixtureImages[1].path),{ok:false,error:{kind:'MaterialImageCacheUnavailable'}});assert.deepEqual(reads,[]);
+ }finally{f.db.close();}
+});
 
 test('restart restores complete independent image inventory, preserving private metadata and exact bytes without re-extraction',async()=>{
  const f=await fixture();try{
