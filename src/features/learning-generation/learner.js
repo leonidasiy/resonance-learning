@@ -9,6 +9,8 @@ import { sourceHref } from "../source-library/source-link.js";
 import { SUBJECTS } from "../knowledge-subjects/public.js";
 import { subjectPresentation } from "../knowledge-subjects/presentation.js";
 
+import { showKnowledgeDeletionDialog } from "./deletion-dialog.js";
+
 import { showGoalCelebration } from "./celebration.js";
 
 import { LearningBatchGatewayClient } from "./batches-gateway.js";
@@ -354,17 +356,26 @@ export function createLearnerController(dependencies) {
     const knowledgeId = button.dataset.knowledgeId ?? "";
     const target = button.dataset.removeTarget;
     if (knowledgeId === "" || (target !== "image" && target !== "knowledge")) return;
-    const key = `remove:${knowledgeId}`;
-    if (!begin(key)) return;
-    const result = await gateway.removeKnowledge(knowledgeId, `knowledge-remove:${knowledgeId}:${createId()}`, target);
-    pending.delete(key);
-    if (!result.ok) {
-      feed = { state: "error", value: feed.value, error: result.error };
-      onChange(undefined, key);
-      return;
-    }
-    await Promise.all([loadFeed(), loadReview()]);
-    if (target === "image") onChange("Image removed. Knowledge point and quizzes kept.");
+    const remove = async () => {
+      const key = `remove:${knowledgeId}`;
+      if (!begin(key)) return /** @type {const} */ ({ ok: false });
+      const result = await gateway.removeKnowledge(knowledgeId, `knowledge-remove:${knowledgeId}:${createId()}`, target);
+      pending.delete(key);
+      if (!result.ok) {
+        feed = { state: "error", value: feed.value, error: result.error };
+        onChange(undefined, key);
+        return /** @type {const} */ ({ ok: false });
+      }
+      await Promise.all([loadFeed(), loadReview()]);
+      if (target === "image") onChange("Image removed. Knowledge point and quizzes kept.");
+      return { ok: /** @type {const} */ (true), deletionId: String(result.value.deletionId ?? "") };
+    };
+    if (target === "image") { await remove(); return; }
+    showKnowledgeDeletionDialog({ remove, saveReason: async (deletionId, reason) => {
+      const result = await gateway.submitDeletionReason(deletionId, reason, `knowledge-deletion-feedback:${deletionId}`);
+      if (result.ok) onChange("Deletion reason saved.");
+      return result.ok;
+    } });
   }
 
   /** @param {LearningBatchGatewayFailure | null} failure */

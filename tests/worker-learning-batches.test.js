@@ -33,6 +33,7 @@ class Database {
   /** @type {string[]} */ queries = [];
   /** @type {unknown[]} */ rows;
   /** @type {unknown | null} */ reviewRow = null;
+  /** @type {unknown | null} */ deletionPoint = null;
   /** @type {number | null} */ answerCount = null;
   /** @type {unknown[]} */ answeredRows = [];
   answerReadFails = false;
@@ -46,6 +47,7 @@ class Database {
   /** @param {string} query */
   /** @param {string} query @param {readonly (string | number | null)[]} [bindings] */
   async first(query, bindings = []) {
+    if (query.startsWith("SELECT p.source_id,p.point_json,c.main_subject")) return this.deletionPoint;
     if (query.includes("FROM learner_feed_batches")) return null;
     if (query.includes("FROM learner_review_batches")) return this.reviewRow;
     if (query.includes("COUNT(*)") && this.answerCount !== null) return { count: this.answerCount };
@@ -316,9 +318,11 @@ Deno.test("multi-select requires exact set equality and wrong selections do not 
 
 Deno.test("learner D1 deletion preserves batch and answer history while removing paired descendants", async () => {
   const database = new Database([]);
+  database.deletionPoint = {source_id:"source-a",point_json:point(1),main_subject:"music"};
   const service = createLearningBatchService({ database: /** @type {import("../worker/learning-batches-d1.js").D1DatabasePort} */ (/** @type {unknown} */ (database)), now: () => "2026-08-19T00:00:00.000Z", logger: () => {} });
   const result = await service.removeKnowledge({ ownerId: "owner-a", knowledgeId: "knowledge-a", idempotencyKey: "remove-a" });
   assertEquals(result.ok, true);
+  assertEquals(database.queries.some(query=>query.startsWith("INSERT INTO knowledge_deletion_feedback")),true);
   for (const table of ["learner_question_state", "learner_knowledge_state", "knowledge_workflow_quizzes", "extraction_knowledge_points"]) assertEquals(database.queries.some((query) => query.includes(`DELETE FROM ${table}`)), true);
   for (const table of ["learner_feed_batches", "learner_review_batches", "learner_review_answers"]) assertEquals(database.queries.some(query => query.includes(`DELETE FROM ${table}`)), false);
 });

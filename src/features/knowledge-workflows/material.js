@@ -10,7 +10,7 @@ import { extractPdfEmbeddedImages } from "./pdf-embedded-images.js";
 /** @typedef {{ readonly ownsOrPermitted: true, readonly storageAllowed: true, readonly transformationAllowed: true, readonly processingAllowed: true, readonly basis: string, readonly reference: string }} MaterialRightsAttestation */
 /** @typedef {{ readonly path: string, readonly mediaType: string, readonly bytes: Uint8Array, readonly url?: string, readonly caption?: string, readonly alt?: string, readonly context?: string }} MaterialMedia */
 /** @typedef {{ readonly id: string, readonly title: string, readonly text: string, readonly locator: string }} MaterialSection */
-/** @typedef {{ readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number, readonly sourceUrl: string, readonly mediaType: string, readonly fileName: string, readonly mode: "text" | "image", readonly contentDigest: string, readonly sections: readonly MaterialSection[], readonly media: readonly MaterialMedia[], readonly provenance: { readonly kind: "authorized-user-material", readonly attestationReference: string, readonly basis: string, readonly processingAllowed?: true } }} AuthorizedMaterial */
+/** @typedef {{ readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number, readonly sourceUrl: string, readonly mediaType: string, readonly fileName: string, readonly mode: "text" | "image", readonly oneKnowledgePointOnly?: boolean, readonly contentDigest: string, readonly sections: readonly MaterialSection[], readonly media: readonly MaterialMedia[], readonly provenance: { readonly kind: "authorized-user-material", readonly attestationReference: string, readonly basis: string, readonly processingAllowed?: true } }} AuthorizedMaterial */
 
 /** @typedef {{ readonly kind: "MaterialCommandInvalid", readonly field: string } | { readonly kind: "MaterialRightsAttestationMissing" } | { readonly kind: "MaterialContentTypeUnsupported", readonly mediaType: string } | { readonly kind: "MaterialImageModeUnsupported", readonly mediaType: string } | { readonly kind: "MaterialImageInvalid" | "MaterialImageBundleInvalid" | "MaterialUrlCaptureInvalid" } | { readonly kind: "MaterialByteLimitExceeded", readonly maximum: number } | { readonly kind: "MaterialTextLimitExceeded", readonly maximum: number } | { readonly kind: "MaterialEncodingInvalid" } | { readonly kind: "MaterialDigestUnavailable" } | { readonly kind: "MaterialPdfInvalid" } | { readonly kind: "MaterialPdfEncrypted" } | { readonly kind: "MaterialPdfCleanupFailed" } | { readonly kind: "MaterialPdfPageLimitExceeded", readonly maximum: number } | { readonly kind: "MaterialPdfTextExtractionUnavailable" } | { readonly kind: "MaterialPdfSelectionMissing" | "MaterialPdfSelectionAmbiguous" } | { readonly kind: "MaterialPdfSelectionInvalid" | "MaterialPdfSelectionConflict", readonly field: string } | { readonly kind: "MaterialPptxInvalid" } | { readonly kind: "MaterialPptxTextExtractionUnavailable" } | { readonly kind: "MaterialPptxCompressionUnsupported" } | { readonly kind: "MaterialArchiveTooLarge" }} MaterialFailure */
 
@@ -91,7 +91,7 @@ export function validatePdfTextSelection(selection, sourceDigest) {
     textCodepointRange: freeze(/** @type {[number, number]} */ ([selection.textCodepointRange[0], selection.textCodepointRange[1]])), excerptDigest: selection.excerptDigest }) };
 }
 
-/** @param {unknown} input @returns {Result<{ readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number, readonly sourceUrl: string, readonly mediaType: string, readonly fileName: string, readonly mode: "text" | "image", readonly bytes: Uint8Array, readonly rightsAttestation: MaterialRightsAttestation, readonly idempotencyKey: string, readonly pdfTextSelection?: PdfTextSelection }, MaterialFailure>} */
+/** @param {unknown} input @returns {Result<{ readonly ownerId: string, readonly runId: string, readonly sourceId: string, readonly sourceRevision: number, readonly sourceUrl: string, readonly mediaType: string, readonly fileName: string, readonly mode: "text" | "image", readonly oneKnowledgePointOnly?: boolean, readonly bytes: Uint8Array, readonly rightsAttestation: MaterialRightsAttestation, readonly idempotencyKey: string, readonly pdfTextSelection?: PdfTextSelection }, MaterialFailure>} */
 function validateCommand(input) {
   if (!record(input)) return invalid("command");
   const candidate = /** @type {Record<string, unknown>} */ (input);
@@ -108,10 +108,12 @@ function validateCommand(input) {
   const fileName = /** @type {string} */ (candidate.fileName);
   const idempotencyKey = /** @type {string} */ (candidate.idempotencyKey);
   if (candidate.mode !== undefined && candidate.mode !== "text" && candidate.mode !== "image") return invalid("mode");
+  if(candidate.oneKnowledgePointOnly !== undefined && typeof candidate.oneKnowledgePointOnly !== "boolean")return invalid("oneKnowledgePointOnly");
+  const oneKnowledgePointOnly = candidate.oneKnowledgePointOnly === true;
   const mode = imageTypes.has(mediaType.trim().toLowerCase()) || mediaType.trim().toLowerCase() === BUNDLE_TYPE ? "image" : candidate.mode === "image" ? "image" : "text";
   const sourceRevision = /** @type {number} */ (candidate.sourceRevision);
   const bytes = /** @type {Uint8Array} */ (candidate.bytes);
-  return { ok: true, value: freeze({ ownerId: ownerId.trim(), runId: runId.trim(), sourceId: sourceId.trim(), sourceRevision, sourceUrl: new URL(sourceUrl).href, mediaType: mediaType.trim().toLowerCase(), fileName: fileName.trim(), mode, bytes, rightsAttestation: freeze({ ownsOrPermitted: true, storageAllowed: true, transformationAllowed: true, processingAllowed: true, basis: attestation.basis.trim(), reference: attestation.reference.trim() }), idempotencyKey: idempotencyKey.trim() }) };
+  return { ok: true, value: freeze({ ownerId: ownerId.trim(), runId: runId.trim(), sourceId: sourceId.trim(), sourceRevision, sourceUrl: new URL(sourceUrl).href, mediaType: mediaType.trim().toLowerCase(), fileName: fileName.trim(), mode, oneKnowledgePointOnly, bytes, rightsAttestation: freeze({ ownsOrPermitted: true, storageAllowed: true, transformationAllowed: true, processingAllowed: true, basis: attestation.basis.trim(), reference: attestation.reference.trim() }), idempotencyKey: idempotencyKey.trim() }) };
 }
 
 /** @param {unknown} command @param {MaterialDependencies} dependencies @returns {Promise<Result<AuthorizedMaterial, MaterialFailure>>} */
@@ -263,7 +265,7 @@ async function parsePptx(value, digest, maximumCharacters, maximumBytes) {
 
 /** @param {ReturnType<typeof validateCommand> extends infer T ? T extends { readonly ok: true, readonly value: infer V } ? V : never : never} value @param {string} digest @param {readonly MaterialSection[]} sections @param {readonly MaterialMedia[]} media @param {string} kind @returns {AuthorizedMaterial} */
 function material(value, digest, sections, media, kind) {
-  return freeze({ ownerId: value.ownerId, runId: value.runId, sourceId: value.sourceId, sourceRevision: value.sourceRevision, sourceUrl: value.sourceUrl, mediaType: value.mediaType, fileName: value.fileName, mode: value.mode, contentDigest: digest, sections: freeze([...sections]), media: freeze([...media]), provenance: freeze({ kind: "authorized-user-material", attestationReference: value.rightsAttestation.reference, basis: `${kind}:${value.rightsAttestation.basis}`, processingAllowed: true }) });
+  return freeze({ ownerId: value.ownerId, runId: value.runId, sourceId: value.sourceId, sourceRevision: value.sourceRevision, sourceUrl: value.sourceUrl, mediaType: value.mediaType, fileName: value.fileName, mode: value.mode, ...(value.oneKnowledgePointOnly ? {oneKnowledgePointOnly:true} : {}), contentDigest: digest, sections: freeze([...sections]), media: freeze([...media]), provenance: freeze({ kind: "authorized-user-material", attestationReference: value.rightsAttestation.reference, basis: `${kind}:${value.rightsAttestation.basis}`, processingAllowed: true }) });
 }
 
 /** @param {string} value @param {string} prefix @returns {readonly MaterialSection[]} */

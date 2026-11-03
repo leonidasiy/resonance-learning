@@ -454,8 +454,8 @@ test('review schema derives a unique owner ID domain without mutating the public
 
 // Prompt-contract fixture only: it does not assess model quality or any particular source.
 test('attribution and probability caveats require independent captured support while argument analysis teaches evidential limits',()=>{
- assert.match(knowledgeReviewerPrompt,/Prompt version: knowledge-quality-review-v41-quoted-prior-evidence\./);
- assert.match(knowledgeRepairPrompt,/Prompt version: knowledge-quality-repair-v33-readable-prior-evidence\./);
+ assert.match(knowledgeReviewerPrompt,/Prompt version: knowledge-quality-review-v42-learner-prose\./);
+ assert.match(knowledgeRepairPrompt,/Prompt version: knowledge-quality-repair-v34-learner-prose\./);
  assert.match(knowledgeReviewerPrompt,/Do not pass unsupported causal certainty merely because the summary reports what the author says or adds a probability caveat/);
  assert.match(knowledgeReviewerPrompt,/Require independently supported descriptive or causal content within the captured evidence/);
  assert.match(knowledgeReviewerPrompt,/reporting the argument itself is appropriate only when the learning purpose is the argument and its evidential limits are explicitly taught/);

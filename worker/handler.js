@@ -79,6 +79,7 @@ import { handleReminderRequest } from "./reminders/http.js";
  *     readonly skipReview?: (command: unknown) => Promise<Result<unknown, { readonly kind: string }>>,
  *     readonly answerReview: (command: unknown) => Promise<Result<unknown, { readonly kind: string }>>,
  *     readonly setPreference: (command: unknown) => Promise<Result<unknown, { readonly kind: string }>>,
+ *     readonly submitDeletionReason?: (command: unknown) => Promise<Result<unknown, { readonly kind: string }>>,
  *     readonly removeKnowledge: (command: unknown) => Promise<Result<unknown, { readonly kind: string }>>,
  *     readonly removeSource?: (command: unknown) => Promise<Result<unknown, { readonly kind: string }>>,
  *     readonly clearGeneratedContent?: (ownerId: string) => Promise<Result<unknown, { readonly kind: string }>>
@@ -196,6 +197,7 @@ export function createDiscoveryWorker(configuration, dependencies) {
       const learningReviewReplace = url.pathname === "/api/learning-generation/review-batch/replace";
       const learningReviewSkip = url.pathname === "/api/learning-generation/review-batch/skip";
       const learningPreference = url.pathname === "/api/learning-generation/knowledge-preference";
+      const learningDeletionFeedback = url.pathname === "/api/learning-generation/knowledge-deletion-feedback";
       const learningKnowledgeRemove = url.pathname === "/api/learning-generation/knowledge-remove";
       const knowledgeWorkflowStatus = url.pathname === "/api/knowledge-workflows/status";
       const knowledgeWorkflowSourceStatus = url.pathname === "/api/knowledge-workflows/source-status";
@@ -210,7 +212,7 @@ export function createDiscoveryWorker(configuration, dependencies) {
         !sourceSearch && !sourceClassification && !sourceClassificationBackfill && !sourceSuppressionCheck && !sourceActiveCheck &&
         !sourceIngestion && !manualMaterial && !wikimediaTimedText &&
         !learningStatus && !learningReviewQueue && !learningPublished && !learningReview && !learningRevocation &&
-        !learningProgress && !learningClassification && !learningFeedBatch && !learningLibraryKnowledge && !learningFeedRefresh && !learningFeedComplete && !learningReviewBatch && !learningReviewRefresh && !learningReviewAnswer && !learningReviewReplace && !learningReviewSkip && !learningReviewRemove && !learningPreference && !learningKnowledgeRemove &&
+        !learningProgress && !learningClassification && !learningFeedBatch && !learningLibraryKnowledge && !learningFeedRefresh && !learningFeedComplete && !learningReviewBatch && !learningReviewRefresh && !learningReviewAnswer && !learningReviewReplace && !learningReviewSkip && !learningReviewRemove && !learningPreference && !learningKnowledgeRemove && !learningDeletionFeedback &&
         !knowledgeWorkflowStatus && !knowledgeWorkflowSourceStatus && !knowledgeWorkflowControl && !knowledgeWorkflowMaterial && !knowledgeWorkflowBackfill && !knowledgeWorkflowReplay && !learningMedia
       ) {
         return json({ error: "Not found." }, 404);
@@ -344,7 +346,7 @@ export function createDiscoveryWorker(configuration, dependencies) {
         return result.ok ? json({ ownerId: authenticated.value.ownerId, result: result.value }, 200) : learningBatchFailureResponse(result.error);
       }
       if (learningClassification && request.method !== "POST") return json({ error: "Method not allowed." }, 405, { Allow: "POST" });
-      if (learningFeedRefresh || learningFeedComplete || learningReviewRefresh || learningReviewAnswer || learningReviewReplace || learningReviewSkip || learningReviewRemove || learningPreference || learningKnowledgeRemove) {
+      if (learningFeedRefresh || learningFeedComplete || learningReviewRefresh || learningReviewAnswer || learningReviewReplace || learningReviewSkip || learningReviewRemove || learningPreference || learningKnowledgeRemove || learningDeletionFeedback) {
         if (request.method !== "POST") return json({ error: "Method not allowed." }, 405, { Allow: "POST" });
         if (dependencies.learningBatches == null) return learningBatchFailureResponse({ kind: "LearningBatchUnavailable" });
       }
@@ -520,7 +522,7 @@ export function createDiscoveryWorker(configuration, dependencies) {
         const result = await dependencies.learningBatches.correctClassification({ ...document, ownerId: authenticated.value.ownerId });
         return result.ok ? json({ result: result.value }, 200) : learningBatchFailureResponse(result.error);
       }
-      if (learningFeedRefresh || learningFeedComplete || learningReviewRefresh || learningReviewAnswer || learningReviewRemove || learningReviewReplace || learningReviewSkip || learningPreference || learningKnowledgeRemove) {
+      if (learningFeedRefresh || learningFeedComplete || learningReviewRefresh || learningReviewAnswer || learningReviewRemove || learningReviewReplace || learningReviewSkip || learningPreference || learningKnowledgeRemove || learningDeletionFeedback) {
         if (!isRecord(document) || Object.hasOwn(document, "ownerId")) return learningBatchFailureResponse({ kind: "LearningBatchCommandInvalid" });
         const ownedCommand = Object.freeze({ ...document, ownerId: authenticated.value.ownerId });
         const learningBatches = dependencies.learningBatches;
@@ -541,6 +543,8 @@ export function createDiscoveryWorker(configuration, dependencies) {
           ? await learningBatches.skipReview?.(ownedCommand) ?? { ok: false, error: { kind: "LearningBatchUnavailable" } }
           : learningPreference
           ? await learningBatches.setPreference(ownedCommand)
+          : learningDeletionFeedback
+          ? await learningBatches.submitDeletionReason?.(ownedCommand) ?? { ok: false, error: { kind: "LearningBatchUnavailable" } }
           : await learningBatches.removeKnowledge(ownedCommand);
         return result.ok ? json({ ownerId: authenticated.value.ownerId, result: result.value }, 200) : learningBatchFailureResponse(result.error);
       }
@@ -1351,7 +1355,9 @@ async function readWorkflowMaterialRequest(request, maximumRequestBytes, maximum
     } else return { ok: false, error: { kind: "WorkflowMaterialCommandInvalid" } };
     const mode = stringFormValue(form, "mode") ?? "text";
     if (mode !== "text" && mode !== "image") return { ok: false, error: { kind: "WorkflowMaterialCommandInvalid" } };
-    const command = Object.freeze({ runId: stringFormValue(form, "runId"), sourceId: stringFormValue(form, "sourceId"), sourceRevision: Number(stringFormValue(form, "sourceRevision")), sourceUrl: stringFormValue(form, "sourceUrl"), mediaType, fileName, mode, idempotencyKey: stringFormValue(form, "idempotencyKey"), bytes });
+    const onePointValue = form.get("oneKnowledgePointOnly");
+    if(onePointValue !== null && onePointValue !== "true" && onePointValue !== "false")return {ok:false,error:{kind:"WorkflowMaterialCommandInvalid"}};
+    const command = Object.freeze({ runId: stringFormValue(form, "runId"), sourceId: stringFormValue(form, "sourceId"), sourceRevision: Number(stringFormValue(form, "sourceRevision")), sourceUrl: stringFormValue(form, "sourceUrl"), mediaType, fileName, mode, oneKnowledgePointOnly: onePointValue === "true", idempotencyKey: stringFormValue(form, "idempotencyKey"), bytes });
     return { ok: true, value: /** @type {Record<string, unknown> & { readonly bytes: Uint8Array }} */ (command) };
   }
   const declaredLength = Number(request.headers.get("content-length"));

@@ -240,8 +240,9 @@ export class SourceLibraryGatewayClient {
 
   /** @param {unknown} command @returns {Promise<Result<{ readonly materialId: string, readonly runId: string }, SourceGatewayFailure>>} */
   async uploadWorkflowMaterial(command) {
-    if (!isRecord(command) || Object.hasOwn(command, "ownerId") || !isNonEmptyText(command.runId) || !isNonEmptyText(command.sourceId) || !Number.isSafeInteger(/** @type {number} */ (command.sourceRevision)) || /** @type {number} */ (command.sourceRevision) < 1 || !isPublicHttpsUrl(command.sourceUrl) || !isNonEmptyText(command.mediaType) || !isNonEmptyText(command.fileName) || !isNonEmptyText(command.idempotencyKey) || (command.mode !== undefined && command.mode !== "text" && command.mode !== "image")) return invalid("command");
+    if (!isRecord(command) || Object.hasOwn(command, "ownerId") || !isNonEmptyText(command.runId) || !isNonEmptyText(command.sourceId) || !Number.isSafeInteger(/** @type {number} */ (command.sourceRevision)) || /** @type {number} */ (command.sourceRevision) < 1 || !isPublicHttpsUrl(command.sourceUrl) || !isNonEmptyText(command.mediaType) || !isNonEmptyText(command.fileName) || !isNonEmptyText(command.idempotencyKey) || (command.mode !== undefined && command.mode !== "text" && command.mode !== "image") || (command.oneKnowledgePointOnly !== undefined && typeof command.oneKnowledgePointOnly !== "boolean")) return invalid("command");
     const mode = command.mode ?? "text";
+    const oneKnowledgePointOnly = command.oneKnowledgePointOnly === true;
     let response;
     if (command.file instanceof Blob) {
       const form = new FormData();
@@ -253,12 +254,13 @@ export class SourceLibraryGatewayClient {
         mediaType: command.mediaType,
         fileName: command.fileName,
         mode,
+        oneKnowledgePointOnly: String(oneKnowledgePointOnly),
         idempotencyKey: command.idempotencyKey,
       })) form.set(key, value);
       form.set("file", command.file, command.fileName);
       response = await this.#request("api/knowledge-workflows/material", "POST", form);
     } else if (typeof command.content === "string") {
-      response = await this.#request("api/knowledge-workflows/material", "POST", { runId: command.runId, sourceId: command.sourceId, sourceRevision: command.sourceRevision, sourceUrl: command.sourceUrl, mediaType: command.mediaType, fileName: command.fileName, mode, idempotencyKey: command.idempotencyKey, content: command.content });
+      response = await this.#request("api/knowledge-workflows/material", "POST", { runId: command.runId, sourceId: command.sourceId, sourceRevision: command.sourceRevision, sourceUrl: command.sourceUrl, mediaType: command.mediaType, fileName: command.fileName, mode, oneKnowledgePointOnly, idempotencyKey: command.idempotencyKey, content: command.content });
     } else return invalid("content");
     if (!response.ok) return response;
     const value = isRecord(response.value) ? response.value.result : null;

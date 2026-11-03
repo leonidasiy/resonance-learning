@@ -226,7 +226,18 @@ export class LearningBatchGatewayClient {
   /** @param {string} knowledgeId @param {"more" | "less"} choice @param {string} idempotencyKey @returns {Promise<Result<Record<string, unknown>, LearningBatchGatewayFailure>>} */
   async setPreference(knowledgeId, choice, idempotencyKey) { return this.#command("api/learning-generation/knowledge-preference", { knowledgeId, choice, idempotencyKey }); }
   /** @param {string} knowledgeId @param {string} idempotencyKey @param {"image"|"knowledge"} [target] @returns {Promise<Result<Record<string, unknown>, LearningBatchGatewayFailure>>} */
-  async removeKnowledge(knowledgeId, idempotencyKey, target) { return this.#command("api/learning-generation/knowledge-remove", { knowledgeId, idempotencyKey, target }); }
+  async removeKnowledge(knowledgeId, idempotencyKey, target) {
+    const result=await this.#command("api/learning-generation/knowledge-remove", { knowledgeId, idempotencyKey, target });
+    if(!result.ok || target === "image")return result;
+    return result.value.knowledgeId===knowledgeId && result.value.removed===true && text(result.value.deletionId)?result:bad();
+  }
+
+  /** @param {string} deletionId @param {string} reason @param {string} idempotencyKey @returns {Promise<Result<Record<string, unknown>, LearningBatchGatewayFailure>>} */
+  async submitDeletionReason(deletionId, reason, idempotencyKey) {
+    if (!text(deletionId) || !text(reason)) return invalid("reason");
+    const result=await this.#command("api/learning-generation/knowledge-deletion-feedback", { deletionId, reason, idempotencyKey });
+    return !result.ok || result.value.deletionId===deletionId && result.value.saved===true?result:bad();
+  }
 
   /** @param {{ readonly sourceId: string, readonly sourceRevision: number, readonly expectedRevision: number, readonly mainSubject: string, readonly topic: string }} command @returns {Promise<Result<true, LearningBatchGatewayFailure>>} */
   async updateSourceClassification(command) {

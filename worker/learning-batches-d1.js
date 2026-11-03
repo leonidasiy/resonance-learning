@@ -767,6 +767,15 @@ export function createLearningBatchService(dependencies) {
         return { ok: false, error: { kind: "KnowledgePurgeFailed" } };
       }
     }
+    try {
+    const deletionId = command.idempotencyKey;
+    const priorDeletion = await database.prepare("SELECT knowledge_id FROM knowledge_deletion_feedback WHERE owner_id=? AND deletion_id=?").bind(command.ownerId,deletionId).first();
+    if (record(priorDeletion)) return priorDeletion.knowledge_id === command.knowledgeId ? {ok:true,value:{knowledgeId:command.knowledgeId,removed:true,deletionId}} : {ok:false,error:{kind:"LearningBatchCommandInvalid"}};
+    const deleted = await database.prepare("SELECT p.source_id,p.point_json,c.main_subject FROM extraction_knowledge_points p LEFT JOIN source_classifications c ON c.owner_id=p.owner_id AND c.source_id=p.source_id AND c.status='classified' WHERE p.owner_id=? AND p.knowledge_id=? LIMIT 1").bind(command.ownerId,command.knowledgeId).first();
+    if (!record(deleted) || !text(deleted.source_id) || !text(deleted.point_json)) return {ok:false,error:{kind:"KnowledgePairNotFound"}};
+    let summary;
+    try { summary=JSON.parse(deleted.point_json).summary; } catch { return {ok:false,error:{kind:"KnowledgePurgeFailed"}}; }
+    if (!text(summary)) return {ok:false,error:{kind:"KnowledgePurgeFailed"}};
     const media = await database.prepare("SELECT private_original_key, private_object_key FROM knowledge_workflow_media_assets a LEFT JOIN knowledge_workflow_media_derivatives d ON d.owner_id = a.owner_id AND d.asset_id = a.asset_id WHERE a.owner_id = ? AND a.knowledge_id = ?").bind(command.ownerId, command.knowledgeId).all();
     if (!media.success) return { ok: false, error: { kind: "KnowledgePurgeFailed" } };
     if (dependencies.bucket !== null && dependencies.bucket !== undefined) {
@@ -780,6 +789,7 @@ export function createLearningBatchService(dependencies) {
       }
     }
     const statements = [
+      database.prepare("INSERT INTO knowledge_deletion_feedback (owner_id,deletion_id,knowledge_id,source_id,summary,main_subject,reason,created_at) VALUES (?,?,?,?,?,?,NULL,?)").bind(command.ownerId,deletionId,command.knowledgeId,deleted.source_id,summary,typeof deleted.main_subject==='string'?deleted.main_subject:null,dependencies.now()),
       database.prepare("DELETE FROM learner_question_state WHERE owner_id = ? AND knowledge_id = ?").bind(command.ownerId, command.knowledgeId),
       database.prepare("DELETE FROM learner_knowledge_state WHERE owner_id = ? AND knowledge_id = ?").bind(command.ownerId, command.knowledgeId),
       database.prepare("DELETE FROM learner_preference_feedback WHERE owner_id = ? AND knowledge_id = ?").bind(command.ownerId, command.knowledgeId),
@@ -794,7 +804,28 @@ export function createLearningBatchService(dependencies) {
       database.prepare("DELETE FROM extraction_knowledge_points WHERE owner_id = ? AND knowledge_id = ?").bind(command.ownerId, command.knowledgeId),
     ];
     const written = await database.batch(statements);
-    return written.length === statements.length && written.every((entry) => entry.success) ? { ok: true, value: Object.freeze({ knowledgeId: command.knowledgeId, removed: true }) } : { ok: false, error: { kind: "KnowledgePurgeFailed" } };
+    return written.length === statements.length && written.every((entry) => entry.success) ? { ok: true, value: Object.freeze({ knowledgeId: command.knowledgeId, removed: true, deletionId }) } : { ok: false, error: { kind: "KnowledgePurgeFailed" } };
+    } catch {
+      // Concurrent confirmations share the committed snapshot, never a second purge.
+      try {
+        const saved=await database.prepare("SELECT knowledge_id FROM knowledge_deletion_feedback WHERE owner_id=? AND deletion_id=?").bind(command.ownerId,command.idempotencyKey).first();
+        if(record(saved)&&saved.knowledge_id===command.knowledgeId)return {ok:true,value:{knowledgeId:command.knowledgeId,removed:true,deletionId:command.idempotencyKey}};
+      } catch { /* Return the established typed purge failure below. */ }
+      dependencies.logger({event:"learning-knowledge-remove-failure",ownerId:command.ownerId,knowledgeId:command.knowledgeId,failureKind:"KnowledgePurgeFailed"});
+      return {ok:false,error:{kind:"KnowledgePurgeFailed"}};
+    }
+  }
+
+  /** @param {unknown} command @returns {Promise<Result<unknown>>} */
+  async function submitDeletionReason(command) {
+    if (!record(command) || !text(command.ownerId) || !text(command.deletionId) || !text(command.reason) || !text(command.idempotencyKey)) return {ok:false,error:{kind:"LearningBatchCommandInvalid"}};
+    try {
+      const updated=await database.prepare("UPDATE knowledge_deletion_feedback SET reason=? WHERE owner_id=? AND deletion_id=? AND (reason IS NULL OR reason=?)").bind(command.reason.trim(),command.ownerId,command.deletionId,command.reason.trim()).run();
+      return changed(updated)?{ok:true,value:{deletionId:command.deletionId,saved:true}}:{ok:false,error:{kind:"KnowledgeDeletionFeedbackNotFound"}};
+    } catch {
+      dependencies.logger({event:"knowledge-deletion-feedback-failure",ownerId:command.ownerId,failureKind:"KnowledgeDeletionFeedbackPersistenceFailed"});
+      return {ok:false,error:{kind:"KnowledgeDeletionFeedbackPersistenceFailed"}};
+    }
   }
 
   /** @param {unknown} command @returns {Promise<Result<unknown>>} */
@@ -876,6 +907,7 @@ export function createLearningBatchService(dependencies) {
     removeReview,
     setPreference,
     removeKnowledge,
+    submitDeletionReason,
     removeSource,
     clearGeneratedContent,
     listCandidates: candidates,

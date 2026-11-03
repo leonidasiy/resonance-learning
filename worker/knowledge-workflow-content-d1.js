@@ -157,45 +157,28 @@ export class D1KnowledgeContentRepository {
     }
   }
 
-  /** Current owner preferences without loading quiz history or unrelated knowledge.
+  /** Keep the review contract while frequency controls remain scheduling-only.
    * @param {{ownerId:string,runId:string,sourceId:string,knowledgeId:string}} scope
    * @returns {Promise<{ok:true,value:{lessOften:{id:string,summary:string}[]}}|{ok:false,error:{kind:string}}>} */
   async preferenceContext(scope) {
-    try {
-      const rows=await this.#database.prepare("SELECT p.knowledge_id,p.point_json FROM extraction_knowledge_points p JOIN learner_preference_feedback f ON f.owner_id=p.owner_id AND f.knowledge_id=p.knowledge_id AND f.choice='less' WHERE p.owner_id=? AND (p.knowledge_id=? OR p.source_id=? OR EXISTS (SELECT 1 FROM source_classifications selected JOIN source_classifications wanted ON wanted.owner_id=selected.owner_id AND wanted.main_subject=selected.main_subject WHERE selected.owner_id=p.owner_id AND selected.source_id=p.source_id AND wanted.source_id=? AND selected.status='classified' AND wanted.status='classified') OR NOT EXISTS (SELECT 1 FROM source_classifications wanted WHERE wanted.owner_id=p.owner_id AND wanted.source_id=? AND wanted.status='classified')) ORDER BY p.created_at,p.knowledge_id").bind(scope.ownerId,scope.knowledgeId,scope.sourceId,scope.sourceId,scope.sourceId).all();
-      if(!rows.success)return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};
-      const lessOften=[];
-      for(const row of rows.results) {
-        if(!isRecord(row)||!text(row.point_json)||!text(row.knowledge_id))return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};
-        const point=JSON.parse(row.point_json);
-        if(!isKnowledgePoint(point))return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};
-        lessOften.push({id:row.knowledge_id,summary:point.summary});
-      }
-      return {ok:true,value:{lessOften}};
-    }catch(error){this.#logger({event:'knowledge-preference-context-failure',ownerId:scope.ownerId,runId:scope.runId,failureKind:'KnowledgeReviewContextFailed'});return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};}
+    // Frequency controls affect scheduling only, never extraction exclusions.
+    return {ok:true,value:{lessOften:[]}};
   }
 
   /** @param {{ownerId:string,runId:string,sourceId:string,knowledgeId:string}} scope @returns {Promise<{ok:true,value:import('../src/features/knowledge-workflows/quality-review.js').ReviewContext}|{ok:false,error:{kind:string}}>} */
   async reviewContext(scope) {
     try {
-      // Classification follows extraction: retain owner preferences for semantic review until a subject is known.
-      const points=await this.#database.prepare("SELECT p.knowledge_id,p.source_id,p.point_json,f.choice FROM extraction_knowledge_points p LEFT JOIN learner_preference_feedback f ON f.owner_id=p.owner_id AND f.knowledge_id=p.knowledge_id WHERE p.owner_id=? AND (p.knowledge_id<>? OR p.run_id<>?) AND (p.source_id=? OR f.choice='less' AND EXISTS (SELECT 1 FROM source_classifications selected JOIN source_classifications wanted ON wanted.owner_id=selected.owner_id AND wanted.main_subject=selected.main_subject WHERE selected.owner_id=p.owner_id AND selected.source_id=p.source_id AND wanted.source_id=? AND selected.status='classified' AND wanted.status='classified') OR f.choice='less' AND NOT EXISTS (SELECT 1 FROM source_classifications wanted WHERE wanted.owner_id=p.owner_id AND wanted.source_id=? AND wanted.status='classified')) ORDER BY p.created_at,p.knowledge_id").bind(scope.ownerId,scope.knowledgeId,scope.runId,scope.sourceId,scope.sourceId,scope.sourceId).all();
+      const points=await this.#database.prepare("SELECT knowledge_id,source_id,point_json FROM extraction_knowledge_points WHERE owner_id=? AND source_id=? AND (knowledge_id<>? OR run_id<>?) ORDER BY created_at,knowledge_id").bind(scope.ownerId,scope.sourceId,scope.knowledgeId,scope.runId).all();
       const quizzes=await this.#database.prepare('SELECT draft_json FROM knowledge_workflow_quizzes WHERE owner_id=? AND source_id=? AND (knowledge_id<>? OR run_id<>?) ORDER BY created_at,quiz_id').bind(scope.ownerId,scope.sourceId,scope.knowledgeId,scope.runId).all();
       if(!points.success||!quizzes.success)return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};
-      const previousKnowledge=[],lessOften=[],previousQuizzes=[];
+      const previousKnowledge=[],lessOften=/** @type {{id:string,summary:string}[]} */([]),previousQuizzes=[];
       for(const row of points.results) {
         if(!isRecord(row)||!text(row.point_json)||!text(row.knowledge_id))return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};
         const point=JSON.parse(row.point_json);
         if(!isKnowledgePoint(point))return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};
         const summary={id:row.knowledge_id,summary:point.summary};
         if(row.source_id===scope.sourceId)previousKnowledge.push(summary);
-        if(row.choice==='less')lessOften.push(summary);
-      }
-      const ownPreference=await this.#database.prepare("SELECT choice FROM learner_preference_feedback WHERE owner_id=? AND knowledge_id=?").bind(scope.ownerId,scope.knowledgeId).first();
-      if(isRecord(ownPreference)&&ownPreference.choice==='less') {
-        const ownPoint=await this.#database.prepare('SELECT point_json FROM extraction_knowledge_points WHERE owner_id=? AND knowledge_id=?').bind(scope.ownerId,scope.knowledgeId).first();
-        const parsed=isRecord(ownPoint)&&text(ownPoint.point_json)?JSON.parse(ownPoint.point_json):null;
-        if(isKnowledgePoint(parsed))lessOften.push({id:scope.knowledgeId,summary:parsed.summary});
+
       }
       for(const row of quizzes.results) {
         if(!isRecord(row)||!text(row.draft_json))return {ok:false,error:{kind:'KnowledgeReviewContextFailed'}};

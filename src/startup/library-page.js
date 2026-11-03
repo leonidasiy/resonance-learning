@@ -4,6 +4,7 @@ import {
   countProcessingWorkflowStatuses,
   SourceLibraryGatewayClient,
 } from "../features/source-library/gateway.js";
+import { showKnowledgeDeletionDialog } from "../features/learning-generation/deletion-dialog.js";
 import { LearningBatchGatewayClient } from "../features/learning-generation/batches-gateway.js";
 import { renderLibraryRoute, renderProcessingStatus, librarySourceSubjects } from "../routes/library.js";
 import { isSubjectId } from "../features/knowledge-subjects/public.js";
@@ -435,27 +436,26 @@ export function createLibraryPage(dependencies) {
       knowledgeId === null || knowledgeId.trim() === "" ||
       pendingKnowledgeId !== null
     ) return;
-    pendingKnowledgeId = knowledgeId;
-    rerender();
-    const result = await learningGateway.removeKnowledge(
-      knowledgeId,
-      `knowledge-remove:${createId()}`,
-    );
-    pendingKnowledgeId = null;
-    if (!result.ok) {
-      onError(friendlyLearning(result.error));
-    } else {
-      knowledge = knowledge.filter((candidate) =>
-        candidate.knowledgeId !== knowledgeId
-      );
-      knowledgeSearchResults = knowledgeSearchResults.filter((candidate) =>
-        candidate.knowledgeId !== knowledgeId
-      );
-      onNotice(
-        libraryCopy(4),
-      );
-    }
-    rerender();
+    showKnowledgeDeletionDialog({ remove: async () => {
+      pendingKnowledgeId = knowledgeId;
+      rerender();
+      const result = await learningGateway.removeKnowledge(knowledgeId, `knowledge-remove:${createId()}`);
+      pendingKnowledgeId = null;
+      if (!result.ok) {
+        onError(friendlyLearning(result.error));
+        rerender();
+        return /** @type {const} */ ({ ok: false });
+      }
+      knowledge = knowledge.filter(candidate => candidate.knowledgeId !== knowledgeId);
+      knowledgeSearchResults = knowledgeSearchResults.filter(candidate => candidate.knowledgeId !== knowledgeId);
+      onNotice(libraryCopy(4));
+      rerender();
+      return { ok: /** @type {const} */ (true), deletionId: String(result.value.deletionId ?? "") };
+    }, saveReason: async (deletionId, reason) => {
+      const result = await learningGateway.submitDeletionReason(deletionId, reason, `knowledge-deletion-feedback:${deletionId}`);
+      if (result.ok) onNotice("Deletion reason saved.");
+      return result.ok;
+    } });
   }
 
   /** @param {string|null} runId @param {number} expectedRevision */
@@ -594,6 +594,7 @@ export function createLibraryPage(dependencies) {
       return uploadFailure(uploadCopy(10));
     }
     const fileName = file?.name ?? "paste.txt";
+    const oneKnowledgePointOnly = form.get("oneKnowledgePointOnly") === "on";
     const pageRange = form.get("pageRange") ?? "";
     if (typeof pageRange !== "string" || pageRange.length > 300 || pageRange.trim() !== "" && (mode !== "image" || mediaType !== "application/pdf")) return uploadFailure(uploadCopy(11));
     pendingSourceId = sourceId;
@@ -633,7 +634,7 @@ export function createLibraryPage(dependencies) {
             await crypto.subtle.digest(
               "SHA-256",
               new TextEncoder().encode(
-                JSON.stringify([sourceId, title, fileName, mode, pageRange, contentHash, form.get("url")]),
+                JSON.stringify([sourceId, title, fileName, mode, pageRange, oneKnowledgePointOnly, contentHash, form.get("url")]),
               ),
             ),
           ),
@@ -668,6 +669,7 @@ export function createLibraryPage(dependencies) {
         sourceUrl: source.canonicalUrl,
         mode,
         mediaType: uploadMediaType,
+        oneKnowledgePointOnly,
         fileName: uploadFile?.name ?? fileName,
         idempotencyKey: `workflow-material:${runId}:${id}`,
         ...(uploadFile === null ? { content } : { file: uploadFile }),

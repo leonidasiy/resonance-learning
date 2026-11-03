@@ -707,3 +707,18 @@ Deno.test('Capture and process saves the bound source title before uploading cap
   assert(await page.submit(form), 'Capture and process completes the save and upload together.');
   assert(calls.join(',') === 'capture,rename,upload', 'Save the title before uploading captured material.');
 });
+
+Deno.test("One knowledge point only defaults off and travels with text, files and captured links", async () => {
+  for(const input of ["text","documents","pdf","images","link"]){
+    let uploaded=false;
+    const page=createUploadPage({...deps,fetch:/** @type {typeof fetch} */(async()=>new Response("captured",{headers:{"content-type":"application/pdf"}})),upload:async(_sourceId,form)=>{uploaded=true;assert(form.get("oneKnowledgePointOnly")==="on","Whole-submission option reaches upload.");return {ok:false,message:"Retry fixture"};}});
+    await page.load("#upload");await page.select(input);
+    assert(page.render().includes("One knowledge point only"),"The named option is visible in every intake.");
+    assert(!/name="oneKnowledgePointOnly"[^>]*checked/.test(page.render()),"Option defaults off.");
+    const form=new FormData();form.set("title","Synthetic upload");form.set("oneKnowledgePointOnly","on");
+    if(input==="text")form.set("content","An entire supported relationship.");
+    else if(input==="link")form.set("url","https://example.test/lesson");
+    else form.set("file",new File(["synthetic"],input==="documents"?"lesson.txt":input==="pdf"?"lesson.pdf":"lesson.png"));
+    await page.submit(form);assert(uploaded,"Submitted the selected intake.");assert(/name="oneKnowledgePointOnly"[^>]*checked/.test(page.render()),"Retry retains the option.");
+  }
+});

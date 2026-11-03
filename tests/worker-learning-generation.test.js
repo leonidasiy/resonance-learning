@@ -332,3 +332,14 @@ Deno.test("Delete quiz route authenticates, injects its owner and propagates rej
   const missing = { ...batches, removeReview: undefined };
   assertEquals((await worker({ learningBatches: missing }).fetch(request(path, { body: command }))).status, 503);
 });
+
+Deno.test("deletion feedback route authenticates and injects its owner after deletion",async()=>{
+  /** @type {unknown[]} */ const seen=[];
+  const unavailable=async()=>({ok:/** @type {const} */(false),error:{kind:"SyntheticUnavailable"}});
+  const app=worker({learningBatches:{loadFeed:unavailable,loadReview:unavailable,completeFeed:unavailable,answerReview:unavailable,setPreference:unavailable,removeKnowledge:unavailable,submitDeletionReason:async command=>{seen.push(command);return {ok:true,value:{saved:true}};}}});
+  const path="/api/learning-generation/knowledge-deletion-feedback";
+  assertEquals((await app.fetch(request(path,{body:{deletionId:"delete-a",reason:"Avoid catalogue trivia.",idempotencyKey:"reason-a"}}))).status,200);
+  assertEquals(JSON.stringify(seen[0]),JSON.stringify({deletionId:"delete-a",reason:"Avoid catalogue trivia.",idempotencyKey:"reason-a",ownerId:"owner-a"}));
+  assertEquals((await app.fetch(request(path,{body:{ownerId:"foreign",deletionId:"delete-a",reason:"No",idempotencyKey:"bad"}}))).status,400);
+  assertEquals((await app.fetch(request(path,{method:"GET"}))).status,405);
+});

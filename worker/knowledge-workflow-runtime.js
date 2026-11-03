@@ -1,4 +1,6 @@
 import {sourceLanguageInstruction} from '../src/features/knowledge-workflows/language-fidelity.js';
+import { isSubjectId } from '../src/features/knowledge-subjects/public.js';
+import { avoidanceClassificationCommand, parseAvoidanceClassification, knowledgeAvoidanceInstruction } from './knowledge-avoidance.js';
 import { exhaustedQuizQualityFailure, isQuizQualityFailureKind } from './knowledge-workflow-quiz-failures.js';
 import { QUIZ_ACCEPTANCE_SCORE } from '../src/features/knowledge-workflows/quiz-pair.js';
 import {observeWorkflowDatabase} from './knowledge-workflow-database.js';
@@ -18,6 +20,7 @@ import { auditMaterialImageCoverage } from './material-image-coverage.js';
 import { requestCoveredMaterialText } from './material-text-coverage.js';
 import { requestWebpageFacts, createWebpageAttemptPolicy, isWebpageEvidence, webpageFactsPrompt, knowledgeSelectionPolicy } from './webpage-facts.js';
 // @ts-check
+import { requestSingleMaterialPoint, singleMaterialPointPrompt } from "./material-single-point.js";
 
 import {createModelRequestLimiter,reviewKnowledgeBatch,knowledgeBatchSelectionPrompt,KNOWLEDGE_REVIEW_WIDTH} from "./knowledge-workflow-parallel-review.js";
 import {runQuizPipeline,QUIZ_PIPELINE_WIDTH} from "./knowledge-workflow-quiz-pipeline.js";
@@ -868,6 +871,11 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
 
   /** @param {KnowledgeWorkflowRun} run @param {import("./knowledge-workflow-model.js").KnowledgeModelCommand["role"]} agentRole @param {string} taskId @param {string} systemPrompt @param {unknown} input @param {number} maxOutputTokens @param {readonly import("./knowledge-workflow-model.js").KnowledgeModelAttachment[]} [attachments] @param {{ readonly technicalAttempt?: number, readonly timeoutMs?: number, readonly responseSchema?: import("./knowledge-workflow-model.js").KnowledgeResponseSchema, readonly reasoningEffort?: "low", readonly providerSort?: "throughput",readonly budgetPageUrl?:string,readonly phase?:import("./webpage-facts.js").WebpagePhase }} [options] @returns {Promise<Result<Record<string, unknown>, { readonly kind: string, readonly technicalRetriesExhausted?:boolean,readonly technicalAttempts?:number }>>} */
   async function generate(run, agentRole, taskId, systemPrompt, input, maxOutputTokens, attachments = undefined, options = {}) {
+    if (agentRole === 'knowledge-scraper' || agentRole === 'question-evaluator' && options.phase === 'normalization') {
+      const avoidance=await scraperAvoidance(run,input,attachments);
+      if(!avoidance.ok)return avoidance;
+      systemPrompt+=avoidance.value;
+    }
     const managed = options.technicalAttempt !== undefined;
     const maximumAttempts=dependencies.technicalRetries===false?1:4;
     for (let attempt = managed ? options.technicalAttempt ?? 1 : 1; attempt <= maximumAttempts; attempt += 1) {
@@ -880,6 +888,46 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
       await waitForTransientRetry(result.error,attempt);
     }
     return {ok:false,error:{kind:'WorkflowStageCommandInvalid'}};
+  }
+
+  /** @param {KnowledgeWorkflowRun} run @param {unknown} input @param {readonly import("./knowledge-workflow-model.js").KnowledgeModelAttachment[]} [attachments] @returns {Promise<Result<string,{kind:string}>>} */
+  async function scraperAvoidance(run,input,attachments) {
+    try {
+      const rows=await dependencies.database.prepare("SELECT deletion_id,summary,reason,main_subject FROM knowledge_deletion_feedback WHERE owner_id=? AND reason IS NOT NULL ORDER BY created_at,deletion_id").bind(run.ownerId).all();
+      if(!rows.success)return {ok:false,error:{kind:'KnowledgeAvoidanceReadFailed'}};
+      /** @type {import('./knowledge-avoidance.js').AvoidedKnowledge[]} */const examples=[];
+      for(const row of rows.results){
+        if(!record(row)||!text(row.deletion_id)||!text(row.summary)||!text(row.reason)||(row.main_subject!==null&&!isSubjectId(row.main_subject)))return {ok:false,error:{kind:'KnowledgeAvoidanceReadFailed'}};
+        examples.push({deletionId:row.deletion_id,summary:row.summary,reason:row.reason,mainSubject:row.main_subject});
+      }
+      if(!examples.length)return {ok:true,value:''};
+      const command=avoidanceClassificationCommand(examples,input);
+      const attachmentDigests=await Promise.all((attachments??[]).map(async attachment=>({id:attachment.id,digest:attachment.bytes===undefined?attachment.url:await imageHash(attachment.bytes)})));
+      const digest=await imageHash(new TextEncoder().encode(JSON.stringify({input,examples,attachments:attachmentDigests})));
+      const config=dependencies.configSnapshots['rights-assessor'];
+      const baseProtocol=dependencies.modelProtocols?.['rights-assessor'];
+      const protocol=baseProtocol===undefined?undefined:{...baseProtocol,reasoningEffort:/** @type {const} */('low')};
+      const binding=await imageHash(new TextEncoder().encode(JSON.stringify({digest,config:config.digest,protocol})));
+      const classified=await stages.run(run,`${command.taskId}:${binding}`,binding,async identity=>{
+        const active=await checkProcessingState(run);if(!active.ok)return active;
+        dependencies.preflightModelWork?.('rights-assessor',{ownerId:run.ownerId,runId:run.runId,stageKey:identity.key,inputDigest:identity.inputDigest,createdAt:identity.createdAt});
+        const model=createSourceDecisionModel({apiStyle:dependencies.apiStyle,configuration:config,apiKey:dependencies.apiKey,endpoint:dependencies.endpoint,protocol,maximumInputCharacters:3_000_000,fetch:dependencies.fetch,now:dependencies.nowMs,logger:entry=>dependencies.logger({...entry,ownerId:run.ownerId,runId:run.runId,stage:'knowledge-avoidance-subject'})});
+        return withModelSlot(()=>model.generate({...command,role:'source-assessor',reasoningEffort:'low',...(attachments===undefined?{}:{attachments})}));
+      },{modelCall:true,maximumProviderAttempts:4,cacheProviderRefusals:true,recoverFailedModel:authorizeOwnerModelRetry});
+      if(!classified.ok)return classified;
+      const parsed=parseAvoidanceClassification(classified.value.output,examples);
+      if(parsed===null)return {ok:false,error:{kind:'KnowledgeAvoidanceClassificationInvalid'}};
+      for(const category of parsed.exampleSubjects){
+        const written=await dependencies.database.prepare("UPDATE knowledge_deletion_feedback SET main_subject=? WHERE owner_id=? AND deletion_id=? AND main_subject IS NULL").bind(category.mainSubject,run.ownerId,category.deletionId).run();
+        if(!written.success)return {ok:false,error:{kind:'KnowledgeAvoidanceWriteFailed'}};
+        const example=examples.find(e=>e.deletionId===category.deletionId);if(example)example.mainSubject=category.mainSubject;
+      }
+      return {ok:true,value:knowledgeAvoidanceInstruction(parsed.mainSubject,examples)};
+    } catch(error) {
+      if(!(error instanceof Error))throw error;
+      dependencies.logger({event:'knowledge-avoidance-failure',ownerId:run.ownerId,runId:run.runId,stage:'knowledge-scraper',failureKind:'KnowledgeAvoidanceFailed'});
+      return {ok:false,error:{kind:'KnowledgeAvoidanceFailed'}};
+    }
   }
 
   /** @param {KnowledgeWorkflowRun} run @param {import("./knowledge-workflow-model.js").KnowledgeModelCommand["role"]} agentRole @param {string} taskId @param {string} systemPrompt @param {unknown} input @param {number} maxOutputTokens @param {readonly import("./knowledge-workflow-model.js").KnowledgeModelAttachment[]} [attachments] @param {{ readonly timeoutMs?: number, readonly responseSchema?: import("./knowledge-workflow-model.js").KnowledgeResponseSchema, readonly reasoningEffort?: "low", readonly providerSort?: "throughput",readonly budgetPageUrl?:string,readonly phase?:import("./webpage-facts.js").WebpagePhase }} [options] @returns {Promise<Result<Record<string, unknown>, { readonly kind: string }>>} */
@@ -1572,9 +1620,12 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     if (!loaded.ok) return { ok: false, error: { kind: loaded.error.kind } };
     if (loaded.value === null || run.materialId === null || loaded.value.materialId !== run.materialId) return { ok: false, error: { kind: "WorkflowMaterialUnavailable" } };
     const storedMaterial = loaded.value;
-    const material = storedMaterial.material;
+    const originalMaterial = storedMaterial.material;
+    const onePoint = originalMaterial.oneKnowledgePointOnly === true;
+    const material = onePoint && originalMaterial.mode !== "image" ? {...originalMaterial,sections:[{id:"whole-submission",title:originalMaterial.fileName,locator:"whole-submission",text:originalMaterial.sections.map(section=>`[${section.locator}] ${section.title}\n${section.text}`).join("\n\n")}]} : originalMaterial;
     if (material.ownerId !== run.ownerId || material.runId !== run.runId || material.sourceId !== run.sourceId || material.sourceRevision !== run.sourceRevision || material.sections.length === 0) return { ok: false, error: { kind: "WorkflowMaterialInvalid" } };
     const sectionUrls = material.sections.map((section) => authorizedSectionUrl(run.canonicalSourceIdentity, section.id));
+    const extractionUrls = onePoint ? sectionUrls.slice(0,1) : sectionUrls;
     /** @type {Map<string, MaterialSection>} */
     const sectionsByUrl = new Map(material.sections.map((section, index) => [sectionUrls[index] ?? "", section]));
     const sectionSummary = material.sections.map((section, index) => Object.freeze({ id: section.id, title: section.title, locator: section.locator, url: sectionUrls[index], characters: section.text.length }));
@@ -1608,6 +1659,7 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
     /** @type {import("../src/features/knowledge-workflows/extraction.js").ExtractionPlanner} */
     const planner = {
       plan: async (input) => {
+        if(onePoint)return {ok:true,value:boundAuthorizedMaterialPlan({revision:1,frontier:extractionUrls,coverageGoals:[{id:"whole-submission",priority:"high",description:"One central knowledge point selected after reading the entire submission."}],unresolvedGaps:[],stopDecision:{decision:"continue",rationale:"Read the entire submission and select one central relationship.",evidenceUrls:extractionUrls,unresolvedGapIds:[]}},extractionUrls,input.scratchpad)};
         const result = await requestExtractionPlan({ taskId: "scraper-material-plan", input: { operation: "plan-authorized-material", ...input, availableSections: sectionSummary, embeddedMedia }, maxOutputTokens: 2048, systemPrompt: `${extractionPlanPrompt} ${materialInventoryPrompt} Identify key concepts and leave unresolvedGaps for concepts that still need observation.`, repairPrompt: `${extractionPlanRepairPrompt} ${materialInventoryPrompt} Identify key concepts and leave unresolvedGaps for concepts that still need observation.`, generate: (command) => generatePlanner(run, command), logger: dependencies.logger });
         if (!result.ok) return result;
         const plan = /** @type {import("../src/features/knowledge-workflows/extraction.js").ExtractionPlan} */ (result.value);
@@ -1615,9 +1667,9 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         return /** @type {const} */ ({ ok: true, value: boundAuthorizedMaterialPlan({ ...plan, frontier: remaining }, remaining, input.scratchpad) });
       },
       // Every section is already mandatory; extraction and review assess its content.
-      replan: async ({ previous, scratchpad }) => ({ ok: true, value: advanceAuthorizedMaterialPlan({ ...previous, revision: previous.revision + 1 }, sectionUrls, scratchpad) }),
+      replan: async ({ previous, scratchpad }) => ({ ok: true, value: advanceAuthorizedMaterialPlan({ ...previous, revision: previous.revision + 1 }, extractionUrls, scratchpad) }),
     };
-    const signature = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([material.contentDigest, material.sections, dependencies.configSnapshots["knowledge-scraper"].digest, material.mode === "image" ? materialImagePrompt : materialBatchPrompt])));
+    const signature = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify([material.contentDigest, material.sections, dependencies.configSnapshots["knowledge-scraper"].digest, onePoint ? singleMaterialPointPrompt : material.mode === "image" ? materialImagePrompt : materialBatchPrompt])));
     /** @type {NonNullable<import("../src/features/knowledge-workflows/extraction.js").ExtractionDependencies["batchAcquirer"]>} */
     const batchAcquirer = {
       key: Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, "0")).join(""),
@@ -1626,12 +1678,20 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         if (!context.ok) return { ok: false, error: context.error };
         /** @type {(MaterialSection & { readonly url: string })[]} */
         const sections = [];
-        for (const url of urls) {
+        for (const url of (onePoint ? sectionUrls : urls)) {
           const section = sectionsByUrl.get(url);
           if (section === undefined) return { ok: false, error: { kind: "WorkflowMaterialSectionNotFound" } };
           sections.push({ ...section, url });
         }
-        if (material.mode === "image") {
+        /** @type {import("./knowledge-workflow-model.js").KnowledgeModelAttachment[]} */
+        const wholeAttachments=[];
+        if(onePoint && material.mode === "image") {
+          for(const section of sections){
+            const visual=await visualFor(section);if(!visual.ok||!visual.value)return {ok:false,error:{kind:visual.error?.kind??"WorkflowMaterialImageUnavailable"}};
+            wholeAttachments.push({id:visual.value.id,mediaType:/** @type {"image/png"|"image/jpeg"|"image/webp"|"image/gif"} */(visual.value.mediaType),bytes:visual.value.bytes});
+          }
+        }
+        if (!onePoint && material.mode === "image") {
           if (sections.length !== 1 || dependencies.materialContent === undefined) return { ok: false, error: { kind: "WorkflowMaterialImageUnavailable" } };
           const visual=await visualFor(sections[0]);
           if(!visual.ok||visual.value===undefined)return {ok:false,error:{kind:visual.error?.kind??"WorkflowMaterialImageUnavailable"}};
@@ -1641,17 +1701,17 @@ export function createKnowledgeWorkflowRuntime(dependencies) {
         const imageIdentity=currentVisual===undefined?undefined:{ownerId:run.ownerId,runId:run.runId,locator:sections[0].locator,visualId:currentVisual.id,digest:await imageHash(currentVisual.bytes)};
         const preferenceContext=await content.reviewContext({ownerId:run.ownerId,runId:run.runId,sourceId:run.sourceId,knowledgeId:`material-context:${run.runId}`});
         if(!preferenceContext.ok)return preferenceContext;
-        const observed = await requestMaterialBatch({ requireCoverage:true,onDrafts:onDrafts===undefined?undefined:async page=>{
+        const observed = await (onePoint ? requestSingleMaterialPoint : requestMaterialBatch)({ requireCoverage:true,onDrafts:onDrafts===undefined?undefined:async page=>{
           const section=sections.find(section=>section.url===page.url);if(!section)return {ok:false,error:{kind:'WorkflowMaterialSectionNotFound'}};
           const ready=await onDrafts({...page,title:section.title,byteCount:new TextEncoder().encode(section.text).byteLength,redirects:0,links:sectionUrls,observedAt:dependencies.now()});
           return ready.ok?ready:{ok:false,error:{kind:record(ready.error)&&text(ready.error.causeKind)?ready.error.causeKind:record(ready.error)&&text(ready.error.kind)?ready.error.kind:'KnowledgeReviewFailed'}};
-        },technicalRetries:dependencies.technicalRetries, reviewMaterial:false, taskId: `scraper-material-batch-${sections[0]?.id}${scratchpad.retryGeneration ? `-retry-${scratchpad.retryGeneration}` : ""}${attempt > 1 ? `-attempt-${attempt}` : ""}`, input: { sections, previousKnowledge:preferenceContext.value.previousKnowledge,lessOften:preferenceContext.value.lessOften,fileName: material.fileName, sourceContext: context.value, mode: material.mode, scope:{ownerId:run.ownerId,runId:run.runId}, ...(currentVisual === undefined ? {} : { visualId: currentVisual.id, imageIdentity }), coverageGoals: plan.coverageGoals, progress: { processedUrls: scratchpad.processedUrls, acceptedHashes: scratchpad.acceptedHashes, coverage: scratchpad.coverage, pageNotes: scratchpad.pageNotes ?? [], unresolvedGaps: scratchpad.unresolvedGaps } }, decodeImage:dependencies.decodeImage, maxOutputTokens: 16384, ...(currentVisual === undefined ? {} : { attachments: [{ id: currentVisual.id, mediaType: /** @type {"image/png" | "image/jpeg" | "image/webp" | "image/gif"} */ (currentVisual.mediaType), bytes: currentVisual.bytes }] }), generate: (command) => generate(run, command.phase === "normalization" ? "question-evaluator" : "knowledge-scraper", command.taskId, command.systemPrompt, {.../** @type {Record<string,unknown>} */(command.input),...(attempt>1?{processingAttempt:attempt}:{}),...(scratchpad.retryGeneration?{retryGeneration:scratchpad.retryGeneration}:{})}, command.maxOutputTokens, command.attachments, { timeoutMs: command.timeoutMs, responseSchema: command.responseSchema, technicalAttempt:command.technicalAttempt, reasoningEffort: command.reasoningEffort, providerSort: command.providerSort,budgetPageUrl:sections[0].url }), logger: (entry) => dependencies.logger({ ...entry, runId: run.runId, stage: "knowledge-scraper" }) });
+        },technicalRetries:dependencies.technicalRetries, reviewMaterial:false, taskId: `scraper-material-batch-${sections[0]?.id}${scratchpad.retryGeneration ? `-retry-${scratchpad.retryGeneration}` : ""}${attempt > 1 ? `-attempt-${attempt}` : ""}`, input: { sections, previousKnowledge:preferenceContext.value.previousKnowledge,lessOften:preferenceContext.value.lessOften,fileName: material.fileName, sourceContext: context.value, mode: material.mode, scope:{ownerId:run.ownerId,runId:run.runId}, ...(currentVisual === undefined ? {} : { visualId: currentVisual.id, imageIdentity }), coverageGoals: plan.coverageGoals, progress: { processedUrls: scratchpad.processedUrls, acceptedHashes: scratchpad.acceptedHashes, coverage: scratchpad.coverage, pageNotes: scratchpad.pageNotes ?? [], unresolvedGaps: scratchpad.unresolvedGaps } }, decodeImage:dependencies.decodeImage, maxOutputTokens: 16384, ...(onePoint && wholeAttachments.length ? {attachments:wholeAttachments} : currentVisual === undefined ? {} : { attachments: [{ id: currentVisual.id, mediaType: /** @type {"image/png" | "image/jpeg" | "image/webp" | "image/gif"} */ (currentVisual.mediaType), bytes: currentVisual.bytes }] }), generate: (command) => generate(run, command.phase === "normalization" ? "question-evaluator" : "knowledge-scraper", command.taskId, command.systemPrompt, {.../** @type {Record<string,unknown>} */(command.input),...(attempt>1?{processingAttempt:attempt}:{}),...(scratchpad.retryGeneration?{retryGeneration:scratchpad.retryGeneration}:{})}, command.maxOutputTokens, command.attachments, { timeoutMs: command.timeoutMs, responseSchema: command.responseSchema, technicalAttempt:command.technicalAttempt, reasoningEffort: command.reasoningEffort, providerSort: command.providerSort,budgetPageUrl:sections[0].url }), logger: (entry) => dependencies.logger({ ...entry, runId: run.runId, stage: "knowledge-scraper" }) });
         if (!observed.ok) return observed;
         return { ok: true, value: observed.value.map((page, index) => ({ ...page, title: sections[index].title, byteCount: material.mode === "image" && currentVisual !== undefined ? currentVisual.bytes.byteLength : new TextEncoder().encode(sections[index].text).byteLength, redirects: 0, links: sectionUrls, observedAt: dependencies.now() })) };
       },
       maximumBatchSize: 1,
     };
-    return { ok: true, value: createExtractionRunner({ onKnowledge, rights: { status: "allowed", sourceId: run.sourceId, sourceRevision: run.sourceRevision }, robots: { status: "allowed" }, planner, orderedUrls: sectionUrls, acquirer: { fetchPage: async () => ({ ok: false, error: { kind: "WorkflowMaterialBatchRequired" } }) }, batchAcquirer, reviewer:parallelKnowledgeReviewer(run,async(point)=>{
+    return { ok: true, value: createExtractionRunner({ onKnowledge, rights: { status: "allowed", sourceId: run.sourceId, sourceRevision: run.sourceRevision }, robots: { status: "allowed" }, planner, orderedUrls: extractionUrls, acquirer: { fetchPage: async () => ({ ok: false, error: { kind: "WorkflowMaterialBatchRequired" } }) }, batchAcquirer, reviewer:parallelKnowledgeReviewer(run,async(point)=>{
       const section=sectionsByUrl.get(point.attribution.sourceUrl);
       if(section===undefined)return {ok:false,error:{kind:'WorkflowMaterialSectionNotFound'}};
       const visual=material.mode==='image'?await visualFor({...section,url:point.attribution.sourceUrl}):{ok:true,value:undefined};

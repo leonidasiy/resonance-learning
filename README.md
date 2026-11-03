@@ -72,6 +72,8 @@ until any required acquisition service is provisioned.
    text or vector diagrams. A blank PDF page range means all pages; `1,3-5`
    selects specific pages. Confirm that you have permission for storage,
    transformation, and external AI processing, then choose **Upload and process**.
+   Select **One knowledge point only** to produce one supported central point
+   based on the entire submission.
 3. Watch the source in **Library**. Its card refreshes every minute with the
    current page/section, extracted points and generated question count. It reports a named reason when
    action is needed, or **Knowledge extraction and paired question generation
@@ -88,6 +90,12 @@ until any required acquisition service is provisioned.
 5. Open **Review** to answer the unlocked questions. Submit with **Check
    answer** to see feedback; uncertain text answers remain pending until the
    grader is available. Review intervals follow your completed attempts.
+
+Delete a knowledge card in Feed or Library by confirming the deletion dialog.
+Then optionally give a brief reason to avoid similar points in that subject.
+Reasons and deleted examples stay in the private backend database; skipping adds
+no scraper exclusion. **See less often** changes feed preferences only. Knowledge
+points contain learning content without extraction or editorial asides.
 
 Semantic text grading uses `~typesafe/jev-latest` and accepts answers at ≥70%
 correctness probability. Exact answers and choices use answer-key checks.

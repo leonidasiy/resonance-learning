@@ -20,7 +20,7 @@ function record(value) { return typeof value === "object" && value !== null && !
 
 /** @param {AuthorizedMaterial} material @returns {string} */
 function materialFingerprint(material) {
-  return JSON.stringify([material.ownerId, material.runId, material.sourceId, material.sourceRevision, material.mode, material.mediaType, material.fileName, material.contentDigest, material.provenance]);
+  return JSON.stringify([material.ownerId, material.runId, material.sourceId, material.sourceRevision, material.mode, material.mediaType, material.fileName, material.contentDigest, material.provenance, ...(material.oneKnowledgePointOnly ? [true] : [])]);
 }
 
 /** @param {MaterialReplay} replay @param {AuthorizedMaterial} material @returns {boolean} */
@@ -28,7 +28,7 @@ function replayMatches(replay, material) {
   let fields;
   try { fields = JSON.parse(replay.fingerprint); }
   catch (error) { if (error instanceof SyntaxError) return false; throw error; }
-  if (!Array.isArray(fields) || fields.length !== 9) return false;
+  if (!Array.isArray(fields) || (fields.length !== 9 && fields.length !== 10)) return false;
   const provenance = fields[8];
   const stored = replay.material.provenance;
   if (!record(provenance) || provenance.kind !== "authorized-user-material" || !text(provenance.attestationReference) || !text(provenance.basis) ||

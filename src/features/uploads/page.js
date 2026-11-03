@@ -77,7 +77,7 @@ export function createUploadPage(dependencies) {
     const selected = new FormData();
     for (
       const key of [
-        "title",
+        "title", "oneKnowledgePointOnly",
         ...(input === "text" ? ["content"] : ["file"]),
         ...(input === "pdf"
           ? ["pageRange", "imageProcessing"]
@@ -166,6 +166,7 @@ export function createUploadPage(dependencies) {
       if(contentType!=="application/pdf"&&contentType!==URL_CAPTURE_TYPE){message=shellMarkup(50);return false;}
       const material=new FormData();material.set("title",title);material.set("url",url);
       material.set("file",new File([await response.blob()],`${url} — captured page.${contentType===URL_CAPTURE_TYPE?'pkpc':'pdf'}`,{type:contentType}));material.set("imageProcessing","off");
+      if(form.get("oneKnowledgePointOnly")==="on")material.set("oneKnowledgePointOnly","on");
       if(context!==null && !await saveTitle(form))return false;
       const result=await dependencies.upload(context?.source.id??"",material,context);
       if(current!==generation)return false;
@@ -348,7 +349,7 @@ export function createUploadPage(dependencies) {
             : imageProcessing ? " checked" : "")
         : "", input === "pdf"
         ? shellMarkup(9, escape(String(draft.get("pageRange") ?? "")))
-        : "", shellMarkup(input === "link" ? 37 : 38), busy ? " disabled" : "", busy ? input === "link" ? shellMarkup(35) : "Uploading…" : input === "link" ? shellMarkup(36) : shellMarkup(20), escape(message));
+        : "", shellMarkup(60,draft.get("oneKnowledgePointOnly")==="on"?" checked":"") + shellMarkup(input === "link" ? 37 : 38), busy ? " disabled" : "", busy ? input === "link" ? shellMarkup(35) : "Uploading…" : input === "link" ? shellMarkup(36) : shellMarkup(20), escape(message));
   }
   /** @param {HTMLElement} root */
   function bind(root) {

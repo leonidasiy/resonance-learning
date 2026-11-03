@@ -172,6 +172,8 @@ Deno.test("learner gateway sends bounded completion, answer, preference, and del
       methods.push(init?.method ?? "GET");
       bodies.push(init?.body === undefined || init.body === null ? null : JSON.parse(String(init.body)));
       const body = init?.body === undefined || init.body === null ? null : JSON.parse(String(init.body));
+      if(body?.knowledgeId && String(_input).includes("knowledge-remove"))return response({ownerId:"owner-a",result:{knowledgeId:body.knowledgeId,removed:true,deletionId:body.idempotencyKey}});
+      if(body?.deletionId)return response({ownerId:"owner-a",result:{deletionId:body.deletionId,saved:true}});
       return response({ ownerId: "owner-a", result: body !== null && Object.hasOwn(body, "questionId") ? { completed: true, correct: true, score: 1, nextDueAt: "2026-08-20T00:00:00.000Z", feedback: { explanation: "Source-backed explanation.", correctAnswer: "A", components: [{ id: "choice-1", correct: true, correctAnswer: "A" }] } } : { ok: true, completed: true, correct: true } });
     },
     baseUrl: "https://app.example.test/",
@@ -185,6 +187,8 @@ Deno.test("learner gateway sends bounded completion, answer, preference, and del
   assertEquals((await gateway.removeKnowledge("k1", "id-remove")).ok, true);
   assertEquals((await gateway.removeKnowledge("k1", "id-image-remove", "image")).ok, true);
   assertEquals(/** @type {Record<string,unknown>} */ (bodies.at(-1)).target, "image");
+  assertEquals((await gateway.submitDeletionReason("delete-a", "Avoid catalogue trivia.", "reason-a")).ok, true);
+  assertEquals(/** @type {Record<string,unknown>} */ (bodies.at(-1)).deletionId, "delete-a");
   assertEquals(methods.every((method) => method === "POST"), true);
   assertEquals(bodies.every((body) => typeof body === "object" && body !== null && !Object.hasOwn(/** @type {Record<string, unknown>} */ (body), "ownerId")), true);
 });
@@ -250,4 +254,15 @@ Deno.test("Replacement validates the slot, answer-hidden question and batch iden
 Deno.test("learner gateway rejects executable inline link destinations", async () => {
   const gateway = new LearningBatchGatewayClient({fetch:async()=>response({result:{...feed,items:feed.items.map(item=>({...item,inlineLinks:[{text:"Point",url:"javascript:alert(1)"}]}))}}),baseUrl:"https://app.example.test/",timeoutMs:1000});
   assertEquals((await gateway.loadFeed("2026-08-19")).ok,false);
+});
+
+Deno.test("deletion gateway rejects missing snapshots and mismatched feedback acknowledgements",async()=>{
+  for(const result of [{knowledgeId:"k",removed:true},{knowledgeId:"foreign",removed:true,deletionId:"d"}]){
+    const gateway=new LearningBatchGatewayClient({fetch:async()=>response({result}),baseUrl:"https://app.example.test/",timeoutMs:1000});
+    assertEquals((await gateway.removeKnowledge("k","d")).ok,false);
+  }
+  for(const result of [{deletionId:"foreign",saved:true},{deletionId:"d",saved:false}]){
+    const gateway=new LearningBatchGatewayClient({fetch:async()=>response({result}),baseUrl:"https://app.example.test/",timeoutMs:1000});
+    assertEquals((await gateway.submitDeletionReason("d","Avoid catalogue trivia.","r")).ok,false);
+  }
 });

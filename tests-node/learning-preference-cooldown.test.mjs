@@ -52,7 +52,7 @@ test('unlearned content stays unlearned; foreign owners and unknown points canno
   }finally{f.db.close();}
 });
 
-test('see-less review context stays within the source main subject and owner',async()=>{
+test('frequency feedback never enters scraper exclusion contexts, including unknown subjects',async()=>{
   const f=fixture();try{
     f.db.exec(`ALTER TABLE extraction_knowledge_points ADD COLUMN run_id TEXT;
       ALTER TABLE extraction_knowledge_points ADD COLUMN point_json TEXT;
@@ -69,14 +69,14 @@ test('see-less review context stays within the source main subject and owner',as
     const repository=new D1KnowledgeContentRepository({database:f.database,logger:()=>{}});
     const context=await repository.reviewContext({ownerId:'test-owner',sourceId:'music-source',runId:'current-run',knowledgeId:'current-point'});
     assert.equal(context.ok,true);
-    assert.deepEqual(context.value.lessOften.map(point=>point.id).sort(),['same-source','same-subject']);
+    assert.deepEqual(context.value.lessOften,[]);
     assert.deepEqual(context.value.previousKnowledge.map(point=>point.id),['same-source']);
     f.db.prepare("UPDATE source_classifications SET status='needs-review' WHERE source_id='music-source'").run();
     const unknown=await repository.reviewContext({ownerId:'test-owner',sourceId:'music-source',runId:'current-run',knowledgeId:'current-point'});
-    assert.deepEqual(unknown.value.lessOften.map(point=>point.id).sort(),['different-subject','same-source','same-subject']);
+    assert.deepEqual(unknown.value.lessOften,[]);
     f.db.prepare("DELETE FROM source_classifications WHERE source_id='music-source'").run();
     const initial=await repository.reviewContext({ownerId:'test-owner',sourceId:'music-source',runId:'initial-run',knowledgeId:'current-point'});
-    assert.deepEqual(initial.value.lessOften.map(point=>point.id).sort(),['different-subject','same-source','same-subject']);
+    assert.deepEqual(initial.value.lessOften,[]);
   }finally{f.db.close();}
 });
 

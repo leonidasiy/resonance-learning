@@ -17,6 +17,30 @@ test('all extraction, completeness, selection and repair prompts receive the sam
   assert.match(knowledgeReviewerPrompt,/return qualityDecision=revise even when sourceReliability passes/);
 });
 
+test('learner prose policy keeps process diagnostics out while preserving useful source captions and qualifications',()=>{
+  assert.match(knowledgeUsefulnessInstruction,/diagnostics.*notes or reviewer feedback fields, never in summary/);
+  assert.match(knowledgeUsefulnessInstruction,/source-written caption can still supply a useful educational relationship/);
+  assert.match(knowledgeUsefulnessInstruction,/Preserve necessary subject-matter conditions and uncertainty actually taught by the source/);
+  assert.match(knowledgeReviewerPrompt,/qualityDecision=revise when any summary clause narrates thinking/);
+  assert.match(knowledgeRepairPrompt,/never replace removed commentary with a description of the repair/);
+});
+
+test('synthetic editorial-aside rejection repairs prose without changing retained source evidence',async()=>{
+  const clean='A minuet is a dance in triple meter.';
+  const aside="(The source's minuet entry begins with text erroneously repeated from the gigue entry, so only the readable definition was captured.)";
+  const original={id:'point',sourceId:'source',sourceRevision:1,summary:`${clean} ${aside}`,normalizedHash:'minuet',evidenceAnchors:[{url:'https://synthetic.invalid/lesson',selector:'p',quote:clean,clause:clean}],mediaCandidates:[],coverageGoalIds:[],attribution:{sourceUrl:'https://synthetic.invalid/lesson'},extractionVersion:'synthetic'};
+  const before=structuredClone(original);let reviews=0,repairs=0;
+  // Constructed judgments verify the bounded repair workflow, not real model accuracy.
+  const result=await createKnowledgeQualityReviewer({context:{lessOften:[],previousKnowledge:[],previousQuizzes:[]},sourceMode:'text',digest:async()=> 'clean-minuet',evaluate:async knowledge=>{
+    reviews++;
+    assert.deepEqual(knowledge.evidenceAnchors,original.evidenceAnchors);
+    const revised=knowledge.summary===clean;
+    return {ok:true,value:syntheticAssessment({knowledge,sourceMode:'text'},{decision:revised?'pass':'revise',reasons:[revised?'Supported educational prose.':'Remove the editorial capture aside.'],feedback:revised?'Keep the supported definition.':'Remove the aside about repeated source text and capture decisions.',matchedLessOftenIds:[],supportingImageEvidence:'',allowTextOnly:true})};
+  },regenerate:async()=>{repairs++;return {ok:true,value:{summary:clean,coverageGoalIds:[],useSupportingImage:false,evidenceClauses:[clean]}};}}).review(original);
+  assert(result.ok);assert.equal(result.value.point.summary,clean);
+  assert.equal(reviews,2);assert.equal(repairs,1);assert.deepEqual(original,before);
+});
+
 const examples=[
   'Genres are reference points that help artists communicate their sound, distributors tag releases, and listeners find music.',
   'Debates about genre labels are pointless because genres overlap, mutate and borrow from one another.',

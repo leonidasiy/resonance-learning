@@ -504,3 +504,12 @@ a.discover-result-action:is(:hover, :focus-visible){text-decoration:underline;ba
 @media (prefers-reduced-motion: reduce) { .review-achievement path, .review-ripple { animation: none; } .review-ripple { opacity: .2; } }
 @media (prefers-reduced-motion: reduce) { .learning-goal-dialog, .learning-goal-dialog::backdrop, .goal-star { animation: none; } }
 :root[data-motion="off"] .learning-goal-dialog, :root[data-motion="off"] .learning-goal-dialog::backdrop, :root[data-motion="off"] .goal-star { animation: none; }
+
+.knowledge-deletion-dialog { width: min(480px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; padding: 28px; border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--surface); color: var(--text); box-shadow: 0 24px 80px var(--goal-shadow); }
+.knowledge-deletion-dialog::backdrop { background: var(--goal-backdrop); backdrop-filter: blur(4px); }
+.knowledge-deletion-dialog h2 { margin: 0 0 12px; font-size: 24px; line-height: 1.2; }
+.knowledge-deletion-dialog p { color: var(--text-muted); line-height: 1.6; }
+.deletion-reason:not([hidden]) { display: grid; gap: 8px; font-weight: 650; }
+.deletion-reason textarea { width: 100%; }
+.deletion-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.knowledge-deletion-dialog .deletion-error { color: var(--danger); }

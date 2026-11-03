@@ -165,3 +165,10 @@ for (const [label, run] of [
     if (fixtureValue.staged.length !== 0 || fixtureValue.records.size !== 0 || fixtureValue.attached.length !== 0) throw new Error("Invalid status must not change storage or the run.");
   });
 }
+
+Deno.test("one-point material replay preserves the option and rejects changing it under the same key", async () => {
+  const {service}=fixture();
+  const first=await service.upload(input({oneKnowledgePointOnly:true}));if(!first.ok)throw new Error("One-point upload attaches.");
+  const replay=await service.upload(input({oneKnowledgePointOnly:true}));if(!replay.ok||!replay.value.reused)throw new Error("Identical one-point request reuses durable material.");
+  const changed=await service.upload(input({oneKnowledgePointOnly:false}));if(changed.ok||changed.error.kind!=="WorkflowMaterialIdempotencyConflict")throw new Error("Cardinality is part of upload identity.");
+});

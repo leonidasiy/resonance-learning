@@ -75,6 +75,8 @@ test("production upload runtime resumes text batches and processes selected PDF 
     let captionCalls=0, decisionCalls=0, decisionRefused=false, associationRunId="capture-run";
     let activeDrafts=0,maximumDrafts=0,reviewOverlappedDraft=false;
     let allowQuizRecovery=false,failedQuizReviews=0,recoveredDrafts=0;
+    let avoidanceClassifications=0,avoidanceExtractions=0;
+    db.prepare("INSERT INTO knowledge_deletion_feedback VALUES(?,?,?,?,?,?,?,?)").run(ownerId,'deleted-music','deleted-card',sourceId,'Synthetic catalogue entry.','music','Avoid catalogue trivia.',clock());
     let modelCalls = 0; let invalidPairedDraftInjected = false, pairedFeedbackSeen = false;
     const transport = async (_url, init) => {
       assert(++modelCalls < 500, "Bound the synthetic model fixture, including coverage and answer-importance audits.");
@@ -91,9 +93,10 @@ test("production upload runtime resumes text batches and processes selected PDF 
       const envelope = Array.isArray(message) ? message[0].text : message;
       const modelInput = JSON.parse(envelope.slice(envelope.indexOf("\n") + 1, envelope.lastIndexOf("\n")));
       const task = modelInput.task ?? modelInput;
-      const config = configs[task.source && task.points || task.operation==='caption-captured-image' ? "rights-assessor" : modelInput.contract.role];
+      const isAvoidance=body.response_format?.json_schema?.name==='knowledge_avoidance_subject_v1';
+      const config = configs[isAvoidance || task.source && task.points || task.operation==='caption-captured-image' ? "rights-assessor" : modelInput.contract.role];
       assert.equal(body.model,config.model.name);
-      assert.deepEqual(body.reasoning, { effort: task.source && task.points || body.response_format?.json_schema?.name==='captured_image_caption_v1' ? "low" : config.model.reasoningEffort });
+      assert.deepEqual(body.reasoning, { effort: isAvoidance || task.source && task.points || body.response_format?.json_schema?.name==='captured_image_caption_v1' ? "low" : config.model.reasoningEffort });
       if(body.response_format?.json_schema?.name==='quiz_evaluation_v3'){
         if(task.knowledge.sourceId?.startsWith('capture-source')&&task.knowledge.mediaCandidates.length){assert.equal(task.imagePurpose,'illustration');assert.match(body.messages[0].content,/Missing depiction alone is not an unpictured knowledge fault/);}
         assert.equal(body.max_tokens,2048);assert.equal(modelInput.contract.role,'question-evaluator');
@@ -112,8 +115,14 @@ test("production upload runtime resumes text batches and processes selected PDF 
         assert.match(body.response_format.json_schema.schema.properties.fillBlank.properties.blanks.items.properties.acceptedAnswers.description,/unique after Unicode NFKC/);
       }
       if (['extract-webpage-facts','normalize-webpage-claim-boundaries','audit-material-image-coverage','review-material-source'].includes(task.operation) || ['knowledge_batch_selection_v1','knowledge_quality_review_v13'].includes(body.response_format?.json_schema?.name) || (task.sections && task.operation !== 'observe-material-image' && task.operation !== 'plan-authorized-material' && task.operation !== 'replan-authorized-material')) assert(body.messages[0].content.includes(knowledgeUsefulnessInstruction), 'All production selection calls receive the shared usefulness policy');
+      if(modelInput.contract?.role==='knowledge-scraper' && db.prepare('SELECT COUNT(*) n FROM knowledge_deletion_feedback').get().n){
+        assert.match(body.messages[0].content,/# Owner deletion preferences/);
+        assert.match(body.messages[0].content,/Avoid catalogue trivia/);
+        avoidanceExtractions++;
+      }
       let output;
-      if(body.response_format?.json_schema?.name==='captured_image_caption_v1'){
+      if(isAvoidance){avoidanceClassifications++;output={mainSubject:'music',exampleSubjects:[]};}
+      else if(body.response_format?.json_schema?.name==='captured_image_caption_v1'){
         assert.equal(imagePreflights.filter(identity=>identity.runId===associationRunId&&identity.stageKey.startsWith('captured-image-caption:')).length,captionCalls+1,'Each caption dispatch has its own durable preflight identity');
         captionCalls++;assert.equal(db.prepare("SELECT COUNT(*) n FROM extraction_knowledge_points WHERE run_id=?").get(associationRunId).n,2);assert(!task.knowledge,'Caption has no knowledge to force-fit');assert.equal(message[2].type,'image_url');output={description:`Fixture original ${task.imageId}`,visibleText:'Q K V'};if(captionCalls===1)output.extra='invalid';
       } else if(body.response_format?.json_schema?.name==='webpage_image_purpose_v1')output={purpose:'illustration',imageId:task.imageId,imageDigest:task.imageDigest,visibleEvidence:'Synthetic original figure context.'};
@@ -274,6 +283,10 @@ test("production upload runtime resumes text batches and processes selected PDF 
       return decoder.decodeImage(bytes, mediaType, new AbortController().signal);
     };
     const packed = unwrap(packImageBundle([2, 4, 6].map((number) => ({ name: `Page ${number}`, locator: `page:${number}`, mediaType: "image/png", bytes: png }))));
+    assert(avoidanceClassifications>0,'A small decision model classifies actual content before scraper dispatch');
+    assert(avoidanceExtractions>0,'Actual scraper system prompts receive matching subject deletion preferences');
+    assert(db.prepare("SELECT COUNT(*) n FROM knowledge_workflow_stages WHERE stage_key LIKE 'knowledge-avoidance-subject-v1:%' AND status='completed'").get().n>0,'Subject decisions are durable across runtime instances');
+    db.prepare('DELETE FROM knowledge_deletion_feedback').run();
     const imageRunId = "image-run", imageSourceId = "image-source", imageSourceUrl = "https://example.test/private-figures";
     const imageMaterial = unwrap(await parseAuthorizedMaterial({ ownerId, runId: imageRunId, sourceId: imageSourceId, sourceRevision: 1, sourceUrl: imageSourceUrl, mode: "image", mediaType: BUNDLE_TYPE, fileName: "figures.pdf.pkpi", bytes: packed, idempotencyKey: imageRunId, rightsAttestation: { ownsOrPermitted: true, storageAllowed: true, transformationAllowed: true, processingAllowed: true, basis: "test-owned", reference: "synthetic-test" } }, { digest: async (bytes) => createHash("sha256").update(bytes).digest("hex"), maximumBytes: 104_857_600, maximumCharacters: 1_000_000 }));
     const imageService = createKnowledgeWorkflowService(repository, { now: clock, createId: () => imageRunId, logger });
@@ -492,6 +505,7 @@ test("production upload runtime resumes text batches and processes selected PDF 
       const full=unwrap(await content.reviewContext(scope));
       const narrow=unwrap(await content.preferenceContext(scope));
       assert.deepEqual(narrow.lessOften,full.lessOften,'Preference-only reads retain full review preference semantics');
+      assert.deepEqual(full.lessOften,[],'See less often must never become a scraper exclusion');
     }
     db.prepare("UPDATE learner_preference_feedback SET choice='more',preference=1 WHERE owner_id=? AND knowledge_id=?").run(ownerId,feedbackPoint);
     assert.deepEqual(unwrap(await content.preferenceContext({ownerId,runId,sourceId,knowledgeId:feedbackPoint})).lessOften,[],'Preference decisions stay fresh');

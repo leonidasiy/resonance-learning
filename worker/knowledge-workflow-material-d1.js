@@ -20,6 +20,7 @@ function changed(result) { return result.success === true && result.meta?.change
 /** @param {unknown} value @returns {AuthorizedMaterial | null} */
 function parseMaterial(value) {
   if (!isRecord(value) || !text(value.ownerId) || !text(value.runId) || !text(value.sourceId) || !positiveInteger(value.sourceRevision) || !text(value.sourceUrl) || !text(value.mediaType) || !text(value.fileName) || (value.mode !== undefined && value.mode !== "text" && value.mode !== "image") || !text(value.contentDigest) || !isRecord(value.provenance) || value.provenance.kind !== "authorized-user-material" || !text(value.provenance.attestationReference) || !text(value.provenance.basis) || !Array.isArray(value.sections) || !Array.isArray(value.media)) return null;
+  if(value.oneKnowledgePointOnly !== undefined && typeof value.oneKnowledgePointOnly !== "boolean")return null;
   const sections = [];
   for (const section of value.sections) {
     if (!isRecord(section) || !text(section.id) || !text(section.title) || typeof section.text !== "string" || !text(section.locator)) return null;
@@ -31,7 +32,7 @@ function parseMaterial(value) {
     if (entry.url !== undefined && (typeof entry.url !== "string" || !URL.canParse(entry.url) || new URL(entry.url).protocol !== "https:" || [entry.caption, entry.alt, entry.context].some(value => typeof value !== "string"))) return null;
     media.push(Object.freeze({ path: entry.path, mediaType: entry.mediaType, bytes: new Uint8Array(), ...(entry.url === undefined ? {} : { url: entry.url, caption: /** @type {string} */(entry.caption), alt: /** @type {string} */(entry.alt), context: /** @type {string} */(entry.context) }) }));
   }
-  return Object.freeze({ ownerId: value.ownerId, runId: value.runId, sourceId: value.sourceId, sourceRevision: value.sourceRevision, sourceUrl: value.sourceUrl, mediaType: value.mediaType, fileName: value.fileName, mode: value.mode === "image" ? "image" : "text", contentDigest: value.contentDigest, sections: Object.freeze(sections), media: Object.freeze(media), provenance: Object.freeze({ kind: "authorized-user-material", attestationReference: value.provenance.attestationReference, basis: value.provenance.basis }) });
+  return Object.freeze({ ownerId: value.ownerId, runId: value.runId, sourceId: value.sourceId, sourceRevision: value.sourceRevision, sourceUrl: value.sourceUrl, mediaType: value.mediaType, fileName: value.fileName, mode: value.mode === "image" ? "image" : "text", contentDigest: value.contentDigest, ...(value.oneKnowledgePointOnly ? {oneKnowledgePointOnly:true} : {}), sections: Object.freeze(sections), media: Object.freeze(media), provenance: Object.freeze({ kind: "authorized-user-material", attestationReference: value.provenance.attestationReference, basis: value.provenance.basis }) });
 }
 
 export class D1KnowledgeWorkflowMaterialRepository {

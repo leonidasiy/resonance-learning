@@ -593,3 +593,24 @@ test('Feed candidate pool includes knowledge beyond the former first-thousand cu
     assert(candidates.some(candidate => candidate.knowledgeId === 'knowledge-1000'));
   } finally { f.db.close(); }
 });
+
+test('confirmed deletion retains private example, optional reason and subject without treating frequency feedback as avoidance', async()=>{
+  const f=fixture(3);
+  try {
+    f.db.prepare("INSERT INTO source_classifications VALUES(?,?,?,?,?,?,?,?,?,?,?)").run('owner','source',1,'music','Harmony',1,'agent','classified','[]','2026-10-18T00:00:00.000Z',null);
+    f.value(await f.service.setPreference({ownerId:'owner',knowledgeId:'knowledge-0',choice:'less',idempotencyKey:'less-only'}));
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM knowledge_deletion_feedback').get().n,0);
+    const removed=f.value(await f.service.removeKnowledge({ownerId:'owner',knowledgeId:'knowledge-0',idempotencyKey:'delete-0'}));
+    assert.equal(removed.deletionId,'delete-0');
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM extraction_knowledge_points WHERE knowledge_id=?').get('knowledge-0').n,0);
+    assert.deepEqual({...f.db.prepare('SELECT summary,main_subject,reason FROM knowledge_deletion_feedback').get()},{summary:'Synthetic idea 0.',main_subject:'music',reason:null});
+    assert.equal(f.value(await f.service.removeKnowledge({ownerId:'owner',knowledgeId:'knowledge-0',idempotencyKey:'delete-0'})).deletionId,'delete-0');
+    assert.equal((await f.service.submitDeletionReason({ownerId:'foreign',deletionId:'delete-0',reason:'No trivia',idempotencyKey:'foreign'})).ok,false);
+    assert.equal((await f.service.submitDeletionReason({ownerId:'owner',deletionId:'delete-0',reason:'  ',idempotencyKey:'blank'})).ok,false);
+    f.value(await f.service.submitDeletionReason({ownerId:'owner',deletionId:'delete-0',reason:'  Avoid catalogue trivia.  ',idempotencyKey:'reason'}));
+    f.value(await f.service.submitDeletionReason({ownerId:'owner',deletionId:'delete-0',reason:'Avoid catalogue trivia.',idempotencyKey:'reason'}));
+    assert.equal(f.db.prepare('SELECT reason FROM knowledge_deletion_feedback').get().reason,'Avoid catalogue trivia.');
+    f.value(await f.service.removeKnowledge({ownerId:'owner',knowledgeId:'knowledge-1',target:'image',idempotencyKey:'image'}));
+    assert.equal(f.db.prepare('SELECT COUNT(*) n FROM knowledge_deletion_feedback').get().n,1);
+  } finally {f.db.close();}
+});
