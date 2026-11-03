@@ -349,7 +349,7 @@ export function createUploadPage(dependencies) {
             : imageProcessing ? " checked" : "")
         : "", input === "pdf"
         ? shellMarkup(9, escape(String(draft.get("pageRange") ?? "")))
-        : "", shellMarkup(60,draft.get("oneKnowledgePointOnly")==="on"?" checked":"") + shellMarkup(input === "link" ? 37 : 38), busy ? " disabled" : "", busy ? input === "link" ? shellMarkup(35) : "Uploading…" : input === "link" ? shellMarkup(36) : shellMarkup(20), escape(message));
+        : "", shellMarkup(60,draft.get("oneKnowledgePointOnly")==="on"?" checked":"") + `<p class="settings-form-note">${shellMarkup(input === "link" ? 37 : input === "text" ? 61 : 38)}</p>`, busy ? " disabled" : "", busy ? input === "link" ? shellMarkup(35) : "Uploading…" : input === "link" ? shellMarkup(36) : shellMarkup(20), escape(message));
   }
   /** @param {HTMLElement} root */
   function bind(root) {

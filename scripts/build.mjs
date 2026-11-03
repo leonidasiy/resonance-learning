@@ -18,8 +18,8 @@ export const ARTIFACT_BUDGETS = Object.freeze({
     label: "Aggregate JavaScript",
     // Measured upload option and shared deletion feedback dialog (2026-11-03).
     // Initial and lazy-chunk limits remain unchanged.
-    rawBytes: 244_372,
-    gzipBytes: 81_063,
+    rawBytes: 244_425,
+    gzipBytes: 81_096,
   }),
   stylesheet: Object.freeze({
     label: "CSS",

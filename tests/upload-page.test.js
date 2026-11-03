@@ -564,7 +564,7 @@ Deno.test("PDF pages has a short label and associated examples without changing 
   const page = createUploadPage(deps); page.select("pdf");
   const html = page.render();
   assert(html.includes('<label>PDF pages<input') && html.includes('aria-describedby="upload-pages-help"'), "Short pages label points to helper.");
-  assert(html.includes('<small id="upload-pages-help">Blank means all; e.g. 1,3-5. Page selection applies when image processing is enabled.</small>'), "Range syntax and conditional behavior stay accessible.");
+  assert(html.includes('<small class="settings-form-note" id="upload-pages-help">Blank means all; e.g. 1,3-5. Page selection applies when image processing is enabled.</small>'), "Range syntax and conditional behavior stay accessible.");
   assert(!/name="imageProcessing"[^>]*checked/.test(html), "PDF stays text-first.");
 });
 
@@ -595,7 +595,7 @@ Deno.test("URL capture keeps editable title and URL, uses PDF text, and excludes
 Deno.test("URL intake explains image capture and preserves other upload modes", async () => {
   const page=createUploadPage(deps);await page.select("link");
   assert(page.render().includes("Available source images are included; otherwise, we process the text on its own.")&&page.render().includes("Submit each relevant page"),"Capture scope is explicit");
-  for(const mode of ["text","documents","pdf","images"]){await page.select(mode);assert(page.render().includes("the total upload limit is 100 MiB"),"Preserve existing helper");}
+  for(const mode of ["text","documents","pdf","images"]){await page.select(mode);assert(page.render().includes("100 MiB per upload."),"Keep the concise upload limit");}
 });
 Deno.test("Link errors are actionable typed projections without arbitrary diagnostics or draft loss", async () => {
   const cases=[
