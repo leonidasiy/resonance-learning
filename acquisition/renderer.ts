@@ -47,6 +47,18 @@ export async function probeIsolation(nodePath: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Only source-declared public scripts may load outside the source path. */
+export function sourceScriptUrls(html: string, pageUrl: string, policy: Policy): ReadonlySet<string> {
+  const urls = new Set<string>();
+  for (const match of html.matchAll(/<script\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/giu)) {
+    try {
+      const candidate = publicUrl(new URL(match[2], pageUrl).href, policy.urlCharacters);
+      if (candidate.ok) urls.add(candidate.value.href);
+    } catch { /* Invalid source URL is not an allowed resource. */ }
+  }
+  return urls;
+}
 export function imageMetadata(
   bytes: Uint8Array,
   type: string,
@@ -243,6 +255,7 @@ export function createRenderer(
           pixels > deps.policy.pixels)
       ) return fail("PixelLimitExceeded");
       const resourceController = new AbortController();
+      const declaredScripts = sourceScriptUrls(new TextDecoder().decode(observation.bytes), observation.finalUrl, deps.policy);
       signal = AbortSignal.any([signal, resourceController.signal]);
       let failure: Failure | undefined;
       const pendingResources = new Set<Promise<Result<Observation>>>();
@@ -262,8 +275,10 @@ export function createRenderer(
           await context.route("**/*", async (route) => {
             const req = route.request();
             const url = publicUrl(req.url(), deps.policy.urlCharacters);
+            const sourceResource = url.ok && inScope(root.value, url.value);
+            const declaredScript = url.ok && req.resourceType() === "script" && declaredScripts.has(url.value.href);
             if (
-              !url.ok || !inScope(root.value, url.value) ||
+              !url.ok || (!sourceResource && !declaredScript) ||
               req.method() !== "GET" ||
               (req.isNavigationRequest() && req.frame() !== page.mainFrame()) ||
               ["image", "media", "font", "stylesheet"].includes(
@@ -285,6 +300,7 @@ export function createRenderer(
                 {
                   ...command,
                   url: url.value.href,
+                  rootUrl: sourceResource ? command.rootUrl : url.value.href,
                   purpose: "resource",
                   maximumBytes: deps.policy.htmlBytes,
                   redirectLimit: deps.policy.pageRedirects,

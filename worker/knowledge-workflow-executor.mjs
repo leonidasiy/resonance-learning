@@ -21,6 +21,7 @@ import { createAcquisitionClient, createAcquisitionWorkflowBrowser } from "./acq
 import { ACQUISITION_POLICY } from "./acquisition-policy.js";
 import { createFirecrawlWorkflowBrowser } from "./firecrawl-browser.js";
 import { createHybridBrowserBudget } from "./hybrid-browser-budget.js";
+import { routeWorkflowBrowser } from "./knowledge-workflow-browser-routing.js";
 import { createOpenSourceImageSearch } from "./open-source-image-search.js";
 import { createReminderRuntime } from "./reminders/runtime.js";
 import { notifyKnowledgeWorkflowOutcome } from "./knowledge-workflow-notifications.js";
@@ -106,12 +107,17 @@ export async function executeKnowledgeWorkflow(environment, event, step, sources
     });
     const browserLogger=(entry)=>logger({event:entry.event,ownerId,runId,stage:'browser',failureKind:entry.failureKind,diagnosticToken:entry.diagnosticToken,field:entry.operationStage??entry.stage,httpStatus:entry.httpStatus});
     // The owner's navigation test authorizes at most 100 provider credits; reservations persist across workflow steps.
-    const browserBudget=createHybridBrowserBudget({database,ownerId,runId,maximumCredits:100,now,createId:()=>crypto.randomUUID(),logger:browserLogger});
+    const maximumBrowserCredits=100, browserSessionTtlSeconds=120;
+    const browserBudget=createHybridBrowserBudget({database,ownerId,runId,maximumCredits:maximumBrowserCredits,now,createId:()=>crypto.randomUUID(),logger:browserLogger});
+    const browserUsage=await database.prepare('SELECT COALESCE(SUM(credits),0) AS credits FROM knowledge_workflow_browser_credit_reservations WHERE owner_id=? AND run_id=?').bind(ownerId,runId).first();
+    if(!browserUsage||!Number.isSafeInteger(browserUsage.credits)||browserUsage.credits<0)throw new Error('BrowserCreditUsageUnavailable');
+    const interactiveAvailable=maximumBrowserCredits-browserUsage.credits>=2*Math.ceil(browserSessionTtlSeconds/60);
     const createBrowser = () => {
       const acquisitionBrowser=createAcquisitionWorkflowBrowser({client:acquisition,policy:ACQUISITION_POLICY,logger:browserLogger});
-      return createFirecrawlWorkflowBrowser({apiKey:typeof environment.FIRECRAWL_API_KEY==='string'?environment.FIRECRAWL_API_KEY:null,fetch:workerFetch,policy:ACQUISITION_POLICY,
+      const interactiveBrowser=createFirecrawlWorkflowBrowser({apiKey:typeof environment.FIRECRAWL_API_KEY==='string'?environment.FIRECRAWL_API_KEY:null,fetch:workerFetch,policy:ACQUISITION_POLICY,sessionTtlSeconds:browserSessionTtlSeconds,
         resolveAddresses:(hostname)=>resolvePublicAddresses(hostname,workerFetch),reserveSession:browserBudget.reserveSession,nowMs:()=>Date.now(),logger:browserLogger,
         readRobots:acquisitionBrowser.readRobots,closeRobots:acquisitionBrowser.close});
+      return routeWorkflowBrowser(acquisitionBrowser,interactiveBrowser,interactiveAvailable);
     };
     const mediaRepository = new D1KnowledgeMediaRepository({ database, bucket, logger: (entry) => logger({ event: entry.event, ownerId: entry.ownerId, stage: "media", failureKind: entry.failureKind }) });
     const publicEgress = createMediaPublicEgress(acquisition.mediaCapability);

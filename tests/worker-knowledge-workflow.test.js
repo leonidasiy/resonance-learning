@@ -227,6 +227,7 @@ Deno.test('source cards explain resource, provider, persistence and exhausted re
     ['KnowledgeModelPaymentRequired','HTTP 402'],
     ['KnowledgeReviewOutputInvalid','format or evidence checks'],
     ['KnowledgeBrowserCaptureTimedOut','loaded or captured'],
+    ['BrowserCreditLimitExceeded:automatic-retries-exhausted','browser credit allowance'],
     ['ExtractionCoverageIncomplete','not been marked complete'],
     ['WorkflowCpuTimeLimitExceeded:automatic-retries-exhausted','four resumes'],
     ['UnexpectedFailure:private-token-secret','unclassified error'],
