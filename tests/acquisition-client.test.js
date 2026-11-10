@@ -28,12 +28,15 @@ const wire = {
 Deno.test("acquisition client standard Fetcher binding composes webpage robots and media with no credential forwarding", async () => {
   /** @type {Request[]} */
   const requests = [];
+  /** @type {string[]} */
+  let pageRequestKeys = [];
   let n = 0;
   const client = createAcquisitionClient({
     binding: {
       fetch: async (/** @type {Request} */ r) => {
         requests.push(r);
         const c = await r.json();
+        if (c.action === 'page') pageRequestKeys = Object.keys(c.request).sort();
         return Response.json({
           ok: true,
           value: { ...wire, finalUrl: c.request.url },
@@ -53,8 +56,10 @@ Deno.test("acquisition client standard Fetcher binding composes webpage robots a
   const page = await browser.readPage({
     rootUrl: "https://source.example/",
     url: wire.finalUrl,
+    signal: new AbortController().signal,
   });
   assertEquals(page.ok, true);
+  assertEquals(pageRequestKeys, ['maximumBytes', 'purpose', 'redirectLimit', 'rootUrl', 'url']);
   const robots = await browser.readRobots({
     sourceUrl: wire.finalUrl,
     robotsUrl: "https://source.example/robots.txt",

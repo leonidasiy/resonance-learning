@@ -458,7 +458,8 @@ export function createAcquisitionWorkflowBrowser(deps) {
     readPage(command) {
       return operation(async () => {
         const result = await deps.client.perform("page", {
-          ...command,
+          url: command.url,
+          rootUrl: command.rootUrl,
           purpose: "page",
           maximumBytes: deps.policy.htmlBytes,
           redirectLimit: deps.policy.pageRedirects,
