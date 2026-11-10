@@ -79,9 +79,12 @@ function renderCollection(model) {
         : shellMarkup(31));
   }
   const ordered = [...collection.items].sort((a, b) => b.approvedAt.localeCompare(a.approvedAt) || b.id.localeCompare(a.id));
+  const processing = ordered.filter(source => (model.workflowStatuses ?? []).some(status => status.sourceId === source.id && countProcessingWorkflowStatuses([status]) > 0));
+  const shelf = ordered.filter(source => !processing.includes(source));
+  const processingSection = processing.length ? `<section class="library-processing" aria-labelledby="library-processing-title"><h2 id="library-processing-title">Processing sources</h2>${processing.map(source => renderSource(model, source)).join("")}</section>` : "";
   const selected = collection.subject ?? "all";
   const subjects = [{ id: "all", label: "All" }, ...SUBJECTS, { id: "unclassified", label: "Unclassified" }];
-  const visible = selected === "all" ? ordered : ordered.filter(source => librarySourceSubjects(source, model.knowledge ?? []).includes(selected));
+  const visible = selected === "all" ? shelf : shelf.filter(source => librarySourceSubjects(source, model.knowledge ?? []).includes(selected));
   const subjectControl = shellMarkup(6, subjects.map(s => shellMarkup(7, s.id, selected === s.id ? "selected" : "", escapeHtml(s.label))).join(""), visible.length, visible.length === 1 ? "" : "s");
   const content = shellMarkup(8, subjectControl, visible.map(source => renderSource(model, source)).join(""), visible.length ? "" : shellMarkup(9));
   const retainedNotice = collection.message === null
@@ -90,7 +93,7 @@ function renderCollection(model) {
   const more = collection.nextCursor === null
     ? ""
     : shellMarkup(11, collection.state === "loading" ? "disabled" : "", collection.state === "loading" ? "Loading..." : shellMarkup(68));
-  return shellMarkup(12, search, retainedNotice, content, more);
+  return shellMarkup(12, search + processingSection, retainedNotice, content, more);
 }
 
 /** Keep source classification available while its knowledge is awaiting publication.

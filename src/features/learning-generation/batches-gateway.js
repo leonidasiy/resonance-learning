@@ -7,7 +7,7 @@ import { isProgressSummary } from "../progress/public.js";
 import { isSubjectId } from "../knowledge-subjects/public.js";
 
 /** @template T, E @typedef {{ readonly ok: true, readonly value: T } | { readonly ok: false, readonly error: E }} Result */
-/** @typedef {{ readonly knowledgeId: string, readonly sourceId: string, readonly sourceRevision: number, readonly questionId: string, readonly title: string, readonly summary: string, readonly inlineLinks?: readonly import("../knowledge-workflows/inline-links.js").InlineLink[], readonly sourceUrl: string, readonly evidenceAnchorIds: readonly string[], readonly media: { readonly assetId: string, readonly kind: string, readonly url: string, readonly attribution: string, readonly purpose?: "illustration" | "evidence" } | null, readonly questionLocked: boolean, readonly sourceClassification: { readonly mainSubject: string, readonly topic: string } | null, readonly sourceClassificationRevision: number }} LearningKnowledgeCard */
+/** @typedef {{ readonly knowledgeId: string, readonly sourceId: string, readonly sourceRevision: number, readonly questionId: string, readonly title: string, readonly summary: string, readonly inlineLinks?: readonly import("../knowledge-workflows/inline-links.js").InlineLink[], readonly sourceUrl: string, readonly evidenceAnchorIds: readonly string[], readonly sourceText?: readonly string[], readonly media: { readonly assetId: string, readonly kind: string, readonly url: string, readonly attribution: string, readonly purpose?: "illustration" | "evidence" } | null, readonly questionLocked: boolean, readonly sourceClassification: { readonly mainSubject: string, readonly topic: string } | null, readonly sourceClassificationRevision: number }} LearningKnowledgeCard */
 /** @typedef {{ readonly batchId: string, readonly learningDay: string, readonly status: "open" | "completed", readonly itemIds: readonly string[], readonly revision: number, readonly createdAt: string, readonly completedAt: string | null }} LearningBatchProjection */
 /** @typedef {{ readonly batch: LearningBatchProjection | null, readonly items: readonly LearningKnowledgeCard[] }} FeedBatchProjection */
 /** @typedef {{ readonly id: string, readonly kind: "single-choice" | "multiple-choice", readonly prompt: string, readonly choices: readonly { readonly id: string, readonly label: string }[], readonly blanks: null }} LearningReviewChoiceVariant */
@@ -43,6 +43,7 @@ function parseBatch(value) {
 function parseCard(value) {
   if (!record(value) || !text(value.knowledgeId) || !text(value.sourceId) || !text(value.questionId) || !text(value.title) || !text(value.summary) || !text(value.sourceUrl) || !URL.canParse(value.sourceUrl) || !Array.isArray(value.evidenceAnchorIds) || value.evidenceAnchorIds.length === 0 || !value.evidenceAnchorIds.every(text) || typeof value.questionLocked !== "boolean") return null;
   if (!positiveInteger(value.sourceRevision) || typeof value.sourceClassificationRevision !== "number" || !Number.isSafeInteger(value.sourceClassificationRevision) || value.sourceClassificationRevision < 0) return null;
+  if (value.sourceText !== undefined && (!Array.isArray(value.sourceText) || !value.sourceText.every(text))) return null;
   if (value.inlineLinks !== undefined && !isInlineLinks(value.inlineLinks)) return null;
   const sourceRevision = /** @type {number} */ (value.sourceRevision);
   const sourceClassificationRevision = /** @type {number} */ (value.sourceClassificationRevision);
@@ -50,7 +51,7 @@ function parseCard(value) {
   if (sourceClassification === undefined || (sourceClassification === null && sourceClassificationRevision !== 0)) return null;
   const sourceUrl = /** @type {string} */ (value.sourceUrl);
   const media = parseMedia(value.media);
-  return media === undefined ? null : freeze({ knowledgeId: value.knowledgeId, sourceId: value.sourceId, sourceRevision, questionId: value.questionId, title: value.title, summary: value.summary, ...(value.inlineLinks !== undefined ? {inlineLinks: Object.freeze(value.inlineLinks.map(link => Object.freeze({...link})))} : {}), sourceUrl, evidenceAnchorIds: freeze([...value.evidenceAnchorIds]), media, questionLocked: value.questionLocked, sourceClassification, sourceClassificationRevision });
+  return media === undefined ? null : freeze({ knowledgeId: value.knowledgeId, sourceId: value.sourceId, sourceRevision, questionId: value.questionId, title: value.title, summary: value.summary, ...(value.inlineLinks !== undefined ? {inlineLinks: Object.freeze(value.inlineLinks.map(link => Object.freeze({...link})))} : {}), sourceUrl, evidenceAnchorIds: freeze([...value.evidenceAnchorIds]), ...(value.sourceText !== undefined ? {sourceText:freeze([...value.sourceText])} : {}), media, questionLocked: value.questionLocked, sourceClassification, sourceClassificationRevision });
 }
 
 /** @param {unknown} value @returns {LearningKnowledgeCard["media"] | undefined} */

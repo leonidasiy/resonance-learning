@@ -4,7 +4,7 @@ import { createLearnerController } from '../src/features/learning-generation/lea
 /** @param {unknown} condition @param {string} message */
 function assert(condition, message) { if (!condition) throw new Error(message); }
 
-Deno.test('Review countdowns wait ten seconds, allow early keyboard activation, preserve slots and cancel on navigation', async () => {
+Deno.test('Review countdowns wait fifteen seconds, allow early keyboard activation, preserve slots and cancel on navigation', async () => {
   const globals = ['document', 'HTMLElement', 'CSS', 'setTimeout', 'clearTimeout'];
   const descriptors = globals.map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
   const originalNow = Date.now;
@@ -48,7 +48,7 @@ Deno.test('Review countdowns wait ten seconds, allow early keyboard activation, 
       } });
       await controller.loadReview();
       controller.bind(root);
-      assert(controller.renderReview().includes('data-countdown-seconds>10<'), 'Countdown begins at ten.');
+      assert(controller.renderReview().includes('data-countdown-seconds>15<'), 'Countdown begins at fifteen.');
       if (mode === 'navigation') {
         controller.unbind(); clock = 20_000; tick();
         assert(calls === 0, 'Leaving Review cancels active timers.');
@@ -57,9 +57,9 @@ Deno.test('Review countdowns wait ten seconds, allow early keyboard activation, 
         (isBatch ? batchButton : replaceButton).click?.();
         (isBatch ? batchButton : replaceButton).click?.();
       } else {
-        clock = 9_900; tick();
-        assert(calls === 0 && seconds.textContent === '1', 'Feedback remains visible until the full ten seconds elapse.');
-        clock = 10_000; tick();
+        clock = 14_900; tick();
+        assert(calls === 0 && seconds.textContent === '1', 'Feedback remains visible until the full fifteen seconds elapse.');
+        clock = 15_000; tick();
       }
       for (let step = 0; step < 20; step++) await Promise.resolve();
       if (mode === 'failure') {

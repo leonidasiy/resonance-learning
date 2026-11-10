@@ -513,3 +513,11 @@ a.discover-result-action:is(:hover, :focus-visible){text-decoration:underline;ba
 .deletion-reason textarea { width: 100%; }
 .deletion-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
 .knowledge-deletion-dialog .deletion-error { color: var(--danger); }
+
+.answered-choices { margin: 16px 0; }
+.answered-choices label { cursor: default; }
+.answered-choices .selected-correct { border: 2px solid var(--action); background: var(--surface); }
+.answered-choices .selected-incorrect { border: 2px solid var(--danger); background: var(--surface); }
+.source-details p { overflow-wrap: anywhere; white-space: pre-wrap; }
+.card-source, .library-processing { min-width: 0; overflow-wrap: anywhere; }
+.library-processing { margin: 24px 0; display: grid; gap: 16px; }

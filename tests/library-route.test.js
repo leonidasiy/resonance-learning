@@ -153,7 +153,8 @@ Deno.test("Library keeps a classified source on its shelf while retry hides its 
   for (const state of ["completed", "per-point-quiz-loop", "retryable-failure"]) {
     for (const subject of ["music", "unclassified"]) {
       const html = renderLibraryRoute({ ...baseModel(), collection: { ...baseModel().collection, items: [classified], subject }, knowledge: [], workflowStatuses: [workflowStatus(state)] });
-      assert(html.includes('data-library-source="source-a"') === (subject === "music"), "Saved source classification must survive retry and page reload even without visible knowledge.");
+      assert(html.includes('id="library-processing-title"') === (state === "per-point-quiz-loop"), "Active sources appear in the processing section.");
+      assert(html.includes('data-library-source="source-a"') === (state === "per-point-quiz-loop" || subject === "music"), "Saved source classification survives retry; active sources remain visible across shelves.");
     }
   }
 });

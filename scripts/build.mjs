@@ -16,16 +16,16 @@ export const ARTIFACT_BUDGETS = Object.freeze({
   }),
   aggregateJavascript: Object.freeze({
     label: "Aggregate JavaScript",
-    // Measured upload option and shared deletion feedback dialog (2026-11-03).
+    // Measured source passages, answered choices, and processing section (2026-11-10).
     // Initial and lazy-chunk limits remain unchanged.
-    rawBytes: 244_425,
-    gzipBytes: 81_096,
+    rawBytes: 245_418,
+    gzipBytes: 81_436,
   }),
   stylesheet: Object.freeze({
     label: "CSS",
-    // Measured upload option and shared deletion feedback dialog (2026-11-03).
-    rawBytes: 49_176,
-    gzipBytes: 10_609,
+    // Measured source passages, answered choices, and processing section (2026-11-10).
+    rawBytes: 49_621,
+    gzipBytes: 10_690,
   }),
   pdfRenderer: Object.freeze({
     label: "On-demand PDF renderer",
