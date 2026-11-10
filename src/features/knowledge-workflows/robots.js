@@ -141,9 +141,11 @@ export function createRobotsGate(dependencies) {
       const saved = dependencies.cachedEvidence;
       if (fetched === undefined && saved !== undefined && saved !== null) {
         if (saved.robotsUrl !== robotsUrl || new URL(saved.targetUrl).origin !== source.origin) return {ok:false,error:{kind:"RobotsCommandInvalid",field:"cachedEvidence"}};
-        fetched = {status:saved.httpStatus,bytes:new TextEncoder().encode(saved.content),unavailable:saved.availability === "unavailable" && saved.content === ""};
-        cache.set(robotsUrl,fetched);
-        dependencies.logger({event:"robots-check-cache-hit"});
+        if (saved.availability !== "unavailable" || saved.content !== "") {
+          fetched = {status:saved.httpStatus,bytes:new TextEncoder().encode(saved.content)};
+          cache.set(robotsUrl,fetched);
+          dependencies.logger({event:"robots-check-cache-hit"});
+        }
       }
       if (fetched?.unavailable) return unavailable(fetched.status,{kind:"RobotsFetchUnavailable"});
       if (fetched === undefined) {

@@ -145,7 +145,7 @@ Deno.test("robots reuses the persisted bounded policy document across extraction
   assertEquals(logs.some((entry) => entry.event === "robots-check-cache-hit"), true);
 });
 
-Deno.test("robots still verifies each target when the persisted robots result was unavailable", async () => {
+Deno.test("robots retries an unavailable persisted result and applies recovered directives", async () => {
   let fetchCalls = 0;
   let resolverCalls = 0;
   /** @type {string[]} */ const targets = [];
@@ -159,22 +159,20 @@ Deno.test("robots still verifies each target when the persisted robots result wa
       checkedAt: "2026-08-13T12:00:00.000Z",
       matchedRule: null,
     },
-    fetch: async () => { fetchCalls += 1; return new Response(null, { status: 500 }); },
-    resolveAddresses: async () => { resolverCalls += 1; return { ok: false, error: { kind: "unexpected-dns-access" } }; },
+    fetch: async () => { throw new Error("Unexpected native fetch"); },
+    fetchRobots: async () => { fetchCalls += 1; return { ok: true, value: { status: 200, bytes: new TextEncoder().encode("User-agent: *\nDisallow: /private\n") } }; },
+    resolveAddresses: async () => { resolverCalls += 1; return { ok: true, value: ["93.184.216.34"] }; },
     verifyTargetReachable: async ({ targetUrl }) => { targets.push(targetUrl); return { ok: true, value: null }; },
     robotsUnavailablePolicy: "allow-403-if-target-reachable",
     now: () => "2026-08-13T12:01:00.000Z",
     logger: () => {},
   });
-  const result = await gate.check({ rights: { ...rights(), canonicalUrl: "https://example.test/learn" }, targetUrl: "https://example.test/learn/chapter" });
-  assertEquals(result.ok, true);
-  if (result.ok) {
-    assertEquals(result.value.availability, "unavailable");
-    assertEquals(result.value.targetUrl, "https://example.test/learn/chapter");
-  }
-  assertEquals(fetchCalls, 0);
-  assertEquals(resolverCalls, 0);
-  assertEquals(JSON.stringify(targets), JSON.stringify(["https://example.test/learn/chapter"]));
+  const result = await gate.check({ rights: { ...rights(), canonicalUrl: "https://example.test/learn" }, targetUrl: "https://example.test/private/chapter" });
+  assertEquals(result.ok, false);
+  if (!result.ok) assertEquals(result.error.kind, "RobotsDenied");
+  assertEquals(fetchCalls, 1);
+  assertEquals(resolverCalls, 1);
+  assertEquals(targets.length, 0);
 });
 
 Deno.test("robots allows a successful empty file as no directives", async () => {
