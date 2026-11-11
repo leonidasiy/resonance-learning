@@ -1630,3 +1630,14 @@ Deno.test("retry restarts an errored platform instance instead of sending an unu
   }, "resume");
   assertEquals(calls.join(","), "restart");
 });
+
+Deno.test("CPU recovery restarts a waiting platform instance with a fresh execution context", async () => {
+  /** @type {string[]} */ const calls = [];
+  await deliverKnowledgeWorkflowControl({
+    status: async () => ({status:"waiting"}),
+    restart: async () => {calls.push("restart");},
+    resume: async () => {calls.push("resume");},
+    sendEvent: async () => {calls.push("event");},
+  }, "resume", false, true);
+  assertEquals(calls.join(","), "restart");
+});

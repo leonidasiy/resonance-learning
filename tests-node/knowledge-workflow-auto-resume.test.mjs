@@ -79,6 +79,7 @@ test('a CPU crash marked before durable backpressure existed receives its profil
  const f=await fixture();try{
   f.unwrap(await f.service.advance({ownerId:f.run.ownerId,runId:f.run.runId,expectedRevision:f.run.revision,nextState:'retryable-failure',failureKind:'WorkflowCpuTimeLimitExceeded'}));
   f.advanceTime(120_000);assert.deepEqual(await f.tick(),{ok:true,value:1});
+  assert.deepEqual(f.counts(),{events:0,restarts:1});
   assert.deepEqual(await readWorkflowCpuWidth({database:f.dependencies.database,stages:new D1WorkflowStageRepository(f.dependencies),run:f.run}),{ok:true,value:2});
  }finally{f.db.close();}
 });
@@ -249,7 +250,7 @@ test('automatic recovery stops after four resumes without published progress; ow
    const run=await f.read();f.unwrap(await f.service.advance({ownerId:'owner-a',runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',failureKind:'WorkflowCpuTimeLimitExceeded'}));f.setStatus('waiting');f.advanceTime(120_000);
    assert.deepEqual(await f.tick(),{ok:true,value:n<4?1:0});
   }
-  const stopped=await f.read();assert.match(stopped.failureKind,/automatic-retries-exhausted/);assert.equal(f.counts().events,4);
+  const stopped=await f.read();assert.match(stopped.failureKind,/automatic-retries-exhausted/);assert.deepEqual(f.counts(),{events:0,restarts:4});
   f.advanceTime(3_600_000);assert.deepEqual(await f.tick(),{ok:true,value:0});assert.equal((await f.read()).revision,stopped.revision);
   f.unwrap(await f.service.control({ownerId:'owner-a',runId:stopped.runId,expectedRevision:stopped.revision,action:'resume',idempotencyKey:'owner-recovery'}));
   const run=await f.read();f.unwrap(await f.service.advance({ownerId:'owner-a',runId:run.runId,expectedRevision:run.revision,nextState:'retryable-failure',failureKind:'WorkflowCpuTimeLimitExceeded'}));f.advanceTime(120_000);assert.deepEqual(await f.tick(),{ok:true,value:1});

@@ -771,7 +771,7 @@ export function createCloudflareDiscoveryWorker(environment, platform) {
       if (!isRecord(command) || (command.action !== "stop" && command.action !== "resume" && command.action !== "generate" && command.action !== "abandon" && command.action !== "retry-quizzes")) return controlled;
       try {
         const instance = await knowledgeWorkflowBinding.get(workflowInstanceId(controlled.value.runId));
-        await deliverKnowledgeWorkflowControl(instance, command.action, Boolean(prior?.ok && prior.value.state === "completed" && ["WorkflowPagesFailed","WorkflowQuizItemsFailed"].includes(prior.value.failureKind??"")));
+        await deliverKnowledgeWorkflowControl(instance, command.action, Boolean(prior?.ok && prior.value.state === "completed" && ["WorkflowPagesFailed","WorkflowQuizItemsFailed"].includes(prior.value.failureKind??"")), Boolean(prior?.ok && command.action === "resume" && prior.value.state === "retryable-failure" && prior.value.failureKind?.startsWith("WorkflowCpuTimeLimitExceeded")));
       } catch (error) {
         if (!(error instanceof Error)) throw error;
         const rollback = workflowControlRollback(command, stopped && projected?.ok ? projected : prior, controlled);
@@ -2548,9 +2548,10 @@ async function projectKnowledgeWorkflowExecution(run,binding) {
  * @param {{ readonly status?: () => Promise<{readonly status:string}>, readonly restart?: () => Promise<void>, readonly pause?: () => Promise<void>, readonly resume?: () => Promise<void>, readonly sendEvent?: (event: { readonly type: string, readonly payload?: unknown }) => Promise<void>, readonly terminate?: (options: { readonly rollback: boolean }) => Promise<void> }} instance
  * @param {unknown} action
  * @param {boolean} [restartCompleted]
+ * @param {boolean} [restartAfterCpuFailure]
  * @returns {Promise<void>}
  */
-async function deliverKnowledgeWorkflowControl(instance, action, restartCompleted = false) {
+async function deliverKnowledgeWorkflowControl(instance, action, restartCompleted = false, restartAfterCpuFailure = false) {
   if (instance === null || typeof instance !== "object") throw new TypeError("Knowledge workflow instance is invalid.");
   if (action === "stop") {
     if (typeof instance.pause !== "function") throw new TypeError("Knowledge workflow pause control is unavailable.");
@@ -2558,7 +2559,7 @@ async function deliverKnowledgeWorkflowControl(instance, action, restartComplete
     return;
   }
   if (action === "resume" || action === "retry-quizzes") {
-    const status = restartCompleted ? "complete" : typeof instance.status === "function" ? (await instance.status()).status : null;
+    const status = restartCompleted || restartAfterCpuFailure ? "complete" : typeof instance.status === "function" ? (await instance.status()).status : null;
     if (["errored","complete"].includes(status ?? "")) {
       if (typeof instance.restart !== "function") throw new TypeError("Knowledge workflow restart is unavailable.");
       await instance.restart();
