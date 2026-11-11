@@ -983,6 +983,30 @@ Deno.test("runtime-exhausted technical acquisition retries are not multiplied by
  }
 });
 
+Deno.test("unsupported linked assets are skipped while an unsupported source root remains a failure", async () => {
+  const root = "https://example.test/", icon = `${root}favicon.ico?v=2`, lesson = `${root}a`;
+  for (const batchMode of [false, true]) {
+    const fixture = setup(), urls = [root, icon, lesson];
+    /** @type {string[]} */ const calls = [];
+    /** @type {import('../src/features/knowledge-workflows/extraction.js').PageAcquirer['fetchPage']} */
+    const fetchPage = async (command) => { calls.push(command.url); return command.url === icon ? { ok: false, error: { kind: "KnowledgePageTypeUnsupported" } } : fixture.dependencies.acquirer.fetchPage(command); };
+    /** @type {NonNullable<import('../src/features/knowledge-workflows/extraction.js').ExtractionDependencies['batchAcquirer']>} */
+    const batchAcquirer = { key: "unsupported-linked-asset", maximumBatchSize: 1, async fetchBatch(command) { const page = await fetchPage({ ...command, url: command.urls[0] }); return page.ok ? { ok: true, value: [page.value] } : page; } };
+    const dependencies = { ...fixture.dependencies, orderedUrls: urls, planner: inventoryPlanner(fixture, urls), acquirer: { fetchPage }, ...(batchMode ? { batchAcquirer } : {}) };
+    const command = { ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1, rootUrl: root, startedAtMs: 0, deadlineAtMs: 1_800_000 };
+    const result = await createExtractionRunner(dependencies).run(command);
+    if (!result.ok) throw new Error(`${result.error.kind}: ${JSON.stringify({ batchMode, calls })}`);
+    assertEquals(result.value.scratchpad.failedPages?.[0].url, icon);
+    assertEquals(result.value.scratchpad.failedPages?.[0].failureKind, "KnowledgePageTypeUnsupported");
+    assertEquals(result.value.scratchpad.processedUrls.join(","), `${root},${lesson}`);
+    assertEquals(calls.join(","), urls.join(","));
+  }
+  const fixture = setup();
+  const rootFailure = await createExtractionRunner({ ...fixture.dependencies, orderedUrls: [root], planner: inventoryPlanner(fixture, [root]), acquirer: { async fetchPage() { return { ok: false, error: { kind: "KnowledgePageTypeUnsupported" } }; } } }).run({ ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1, rootUrl: root, startedAtMs: 0, deadlineAtMs: 1_800_000 });
+  assertEquals(rootFailure.ok, false);
+  if (!rootFailure.ok) { assertEquals(rootFailure.error.kind, "ExtractionAcquisitionFailed"); assertEquals("causeKind" in rootFailure.error ? rootFailure.error.causeKind : undefined, "KnowledgePageTypeUnsupported"); }
+});
+
 Deno.test("batch-reviewed extraction commits in source order and resumes without repeating committed points", async () => {
   const fixture=setup();
   const original=fixture.dependencies.acquirer.fetchPage;

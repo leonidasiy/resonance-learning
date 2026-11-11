@@ -586,7 +586,7 @@ export function createExtractionRunner(dependencies) {
             if (acquisitionFailureKind(batch.error) === "WebpageImageRunDeadlineExceeded" && dependencies.nowMs() >= command.deadlineAtMs) return { ok: true, value: freeze({ state: "awaiting-time-limit-decision", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "time-limit" }) };
             const failureKind = acquisitionFailureKind(batch.error);
             const interruption = urls.length === 1 ? interruptedUnitCause(batch.error) : undefined;
-            if (interruption === undefined && !pageLocalFailure(failureKind, batch.error)) return fail(acquisitionFailure(batch.error), dependencies, command.runId);
+            if (interruption === undefined && !pageLocalFailure(failureKind, batch.error) && !(failureKind === "KnowledgePageTypeUnsupported" && (urls.length > 1 || nextUrl !== root.href))) return fail(acquisitionFailure(batch.error), dependencies, command.runId);
             if (urls.length > 1) {
               if (isRecord(batch.error) && batch.error.technicalRetriesExhausted === true) return fail(acquisitionFailure(batch.error), dependencies, command.runId);
               for (const url of urls) singleBatchRetries.set(url, 2); continue;
@@ -616,7 +616,7 @@ export function createExtractionRunner(dependencies) {
           if (acquisitionFailureKind(acquired.error) === "WebpageImageRunDeadlineExceeded" && dependencies.nowMs() >= command.deadlineAtMs) return { ok: true, value: freeze({ state: "awaiting-time-limit-decision", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "time-limit" }) };
           const failureKind = acquisitionFailureKind(acquired.error);
           const interruption = interruptedUnitCause(acquired.error);
-          if (interruption === undefined && !pageLocalFailure(failureKind, acquired.error)) return fail(acquisitionFailure(acquired.error), dependencies, command.runId);
+          if (interruption === undefined && !pageLocalFailure(failureKind, acquired.error) && !(failureKind === "KnowledgePageTypeUnsupported" && nextUrl !== root.href)) return fail(acquisitionFailure(acquired.error), dependencies, command.runId);
           const recorded = await recordFailedPage(nextUrl, interruption === undefined ? failureKind : "WorkflowProcessingInterrupted", isRecord(acquired.error) && positiveInteger(acquired.error.technicalAttempts) ? acquired.error.technicalAttempts : isRecord(acquired.error) && positiveInteger(acquired.error.attempts) ? acquired.error.attempts : attempt, undefined, interruption);
           if (!recorded.ok) return recorded;
           continue;
