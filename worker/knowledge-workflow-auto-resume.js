@@ -103,7 +103,7 @@ export async function resumeInterruptedKnowledgeWorkflows({database,binding,owne
           throw new Error(controlled.error.kind);
         }
         operation='dispatch-resume';
-        try {await deliverKnowledgeWorkflowControl(instance,'resume',status==='complete',run.state==='retryable-failure'&&failure.startsWith('WorkflowCpuTimeLimitExceeded'));}
+        try {await deliverKnowledgeWorkflowControl(instance,'resume',status==='complete'||run.state==='retryable-failure');}
         catch(error) {
           const rollback=workflowControlRollback(command,loaded,controlled)??{ownerId,runId:run.runId,expectedRevision:controlled.value.revision,nextState:/** @type {const} */('retryable-failure'),failureKind:'WorkflowInstanceControlFailed'};
           operation='rollback-resume';

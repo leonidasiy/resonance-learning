@@ -110,10 +110,10 @@ test('hard CPU recovery preserves legacy width one and other crashes do not crea
  }
 });
 
-test('retryable waiting work receives the existing resume event without restarting the workflow',async()=>{
+test('retryable waiting work restarts from its saved phase',async()=>{
   const f=await fixture();try{
     f.unwrap(await f.service.advance({ownerId:'owner-a',runId:f.run.runId,expectedRevision:f.run.revision,nextState:'retryable-failure',failureKind:'WorkflowStagePersistenceFailed'}));f.setStatus('waiting');
-    f.advanceTime(120_000);assert.deepEqual(await f.tick(),{ok:true,value:1});assert.deepEqual(f.counts(),{events:1,restarts:0});assert.equal((await f.read()).state,'per-point-quiz-loop');
+    f.advanceTime(120_000);assert.deepEqual(await f.tick(),{ok:true,value:1});assert.deepEqual(f.counts(),{events:0,restarts:1});assert.equal((await f.read()).state,'per-point-quiz-loop');
   }finally{f.db.close();}
 });
 
@@ -135,8 +135,8 @@ test('stopped database states resume when Cloudflare reports a pending event wai
       f.advanceTime(1);assert.deepEqual(await f.tick(),{ok:true,value:1});
       const resumed=await f.read();assert.equal(resumed.state,'extraction-loop');assert.deepEqual(resumed.counts,f.run.counts);
       assert.equal(Date.parse(resumed.extractionDeadlineAt)-Date.parse(f.dependencies.now()),30*60_000);
-      assert.deepEqual(f.counts(),{events:1,restarts:0});
-      assert.deepEqual(await f.tick(),{ok:true,value:0});assert.deepEqual(f.counts(),{events:1,restarts:0});
+      assert.deepEqual(f.counts(),phase==='retryable-failure'?{events:0,restarts:1}:{events:1,restarts:0});
+      assert.deepEqual(await f.tick(),{ok:true,value:0});assert.deepEqual(f.counts(),phase==='retryable-failure'?{events:0,restarts:1}:{events:1,restarts:0});
     }finally{f.db.close();}
   }
 });
