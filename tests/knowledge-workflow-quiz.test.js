@@ -88,6 +88,28 @@ Deno.test("quiz actor-critic revises after feedback and continues sequentially",
   assertEquals(fixture.attempts.filter((attempt) => attempt.knowledgeId === "knowledge-b").length, 3);
 });
 
+Deno.test("schema repair narrows a malformed pair to one aligned answer", async () => {
+  const fixture = setup();
+  let calls = 0;
+  /** @type {(string | null)[]} */ const repairs = [];
+  const actor = createQuizActorCritic({
+    generator: { async generate(command) {
+      calls++;
+      if (calls === 1) return { ok: false, error: { kind: "QuizDraftSchemaInvalid", validationIssues: ["correct keys must match answers"] } };
+      repairs.push(command.feedback);
+      return { ok: true, value: { id: "repaired", knowledgeId: command.knowledge.id, knowledgeRevision: 1, kind: "single-choice", prompt: "Which concept is supported?", options: ["Correct", "Incorrect"], answer: "Correct", citedEvidenceUrls: ["https://example.test/a"] } };
+    } },
+    reviewer: { async evaluate() { return { ok: true, value: { score: 9, reasons: ["Supported concept"], feedback: "Ready", groundingProblems: [] } }; } },
+    repository: fixture.repository, now: () => "2026-11-11T00:00:00.000Z", logger: () => {}, maxAttempts: 3,
+  });
+  const result = await actor.run({ ownerId: "owner-a", runId: "run-schema-repair", points: [points()[0]] });
+  if (!result.ok) throw new Error(result.error.kind);
+  assertEquals(calls, 2);
+  assertEquals(result.value.dispositions[0].status, "accepted");
+  assertEquals(repairs[0]?.includes("one central concept"), true);
+  assertEquals(repairs[0]?.includes("correct keys must match answers"), true);
+});
+
 Deno.test("quiz gets three corrective retries, keeps final success and retains knowledge after exhausted pairs", async () => {
   const fixture=setup();
   /** @type {(string|null)[]} */ const feedback=[];
