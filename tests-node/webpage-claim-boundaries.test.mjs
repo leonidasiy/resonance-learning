@@ -29,7 +29,7 @@ test('normalization shares strict evidence validation and never repairs malforme
  const foreign=structuredClone(split);foreign[0].evidenceAnchors[0].reference={kind:'text',id:'foreign'};
  const {result,phases}=await exercise(reviewed(foreign));assert(result.ok);assert.equal(result.value.status,'partial');assert.equal(result.value.partialIssues[0].kind,'WebpageCandidateEvidenceInvalid');assert.deepEqual(result.value.candidates.map(c=>c.normalizedHash),['cold']);assert.deepEqual(phases,['extraction','normalization','grounding']);
  const malformed=await exercise({...reviewed(split),notes:[]});assert.equal(malformed.result.error.kind,'WebpageClaimBoundariesInvalid');assert.deepEqual(malformed.phases,['extraction','normalization']);
- const partial=await exercise(reviewed(split),{initial:[null,combined]});assert(partial.result.ok);assert.equal(partial.result.value.status,'partial');assert.deepEqual(partial.phases,['extraction','grounding']);
+ const partial=await exercise(reviewed(split),{initial:[null,combined]});assert(partial.result.ok);assert.equal(partial.result.value.status,'partial');assert.deepEqual(partial.phases,['extraction','normalization','grounding']);
 });
 test('valid adverse grounding is terminal and normalization gets exactly one bounded attempt',async()=>{
  const {result,phases}=await exercise(reviewed(split),{grounded:false});assert(result.ok);assert.equal(result.value.candidates.length,0);assert.deepEqual(phases,['extraction','normalization','grounding']);

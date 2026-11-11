@@ -129,7 +129,7 @@ function projectHtml(html, baseUrl, renderedTitle = "", renderedText = "", rende
   const withoutScripts = html.replace(/<script[\s\S]*?<\/script>/giu, " ").replace(/<style[\s\S]*?<\/style>/giu, " ");
   const staticText = withoutScripts.replace(/<[^>]+>/gu, " ").replace(/&nbsp;/gu, " ").replace(/&amp;/gu, "&").replace(/\s+/gu, " ").trim();
   const readable = (renderedText.trim() === "" ? staticText : renderedText.replace(/\s+/gu, " ").trim()).slice(0, 250_000);
-  const staticLinks = [...withoutScripts.matchAll(/href\s*=\s*["']([^"']+)["']/giu)].flatMap((match) => {
+  const staticLinks = [...withoutScripts.matchAll(/<a\b[^>]*\s+href\s*=\s*["']([^"']+)["']/giu)].flatMap((match) => {
     const value = match[1];
     return value !== undefined && URL.canParse(value, baseUrl) ? [new URL(value, baseUrl).href] : [];
   });

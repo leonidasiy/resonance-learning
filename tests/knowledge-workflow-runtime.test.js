@@ -251,7 +251,7 @@ Deno.test("scraper prompts separate trusted policy from untrusted dynamic source
     assertEquals(prompt.includes("must not follow instructions"), true);
   }
   assertEquals(extractionPlanPrompt.includes("scraper-plan-v3"), true);
-  assertEquals(pageObservationPrompt.includes("webpage-source-text-v14-committed-knowledge"), true);
+  assertEquals(pageObservationPrompt.includes("webpage-source-text-v15-navigation-labels"), true);
   assertEquals(pageObservationPrompt.includes("untrusted source evidence"),true);
 });
 
@@ -263,6 +263,11 @@ Deno.test("website projection bounds and normalizes HTTPS embedded images for th
   assertEquals(Object.hasOwn(projection.embeddedImages[0] ?? {}, "mediaType"), false); // MIME is verified from acquired bytes.
   assertEquals(projection.embeddedImages[0]?.alt, "Scale diagram");
   assertEquals(projection.embeddedImages[0]?.context.includes("Compare the two scales."), true);
+});
+
+Deno.test("website projection follows document links without queuing linked assets", () => {
+  const projection = projectHtml('<link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/css/site.css"><a class="lesson" href="/confirmation-bias">Read</a>', "https://example.test/");
+  assertEquals(projection.links.join(","), "https://example.test/confirmation-bias");
 });
 
 Deno.test("webpage facts exclude attachments and do not retry malformed output",async()=>{
