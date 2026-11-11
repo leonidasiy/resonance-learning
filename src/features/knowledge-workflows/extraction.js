@@ -327,9 +327,15 @@ async function remember(memory, kind, retention, payload, dependencies, runId) {
   return result.ok ? { ok: true, value: null } : fail({ kind: "ScraperMemoryPersistenceFailed" }, dependencies, runId);
 }
 
+/** Empty fragments address the same document but named fragments can select different content. @param {string} url @param {ExtractionScratchpad} scratchpad */
+function unvisitedPageUrl(url, scratchpad) {
+  const key = url.replace(/#$/, "");
+  return !scratchpad.processedUrls.some(page => page.replace(/#$/, "") === key) && !scratchpad.processedResponseUrls?.some(page => page.replace(/#$/, "") === key) && !scratchpad.failedPages?.some(page => page.url.replace(/#$/, "") === key);
+}
+
 /** @param {ExtractionPlan} plan @param {ExtractionScratchpad} scratchpad @returns {string | null} */
 function pendingFrontierUrl(plan, scratchpad) {
-  return plan.frontier.find((url) => !scratchpad.processedUrls.includes(url) && !scratchpad.processedResponseUrls?.includes(url) && !scratchpad.failedPages?.some(page => page.url === url)) ?? null;
+  return plan.frontier.find((url) => unvisitedPageUrl(url, scratchpad)) ?? null;
 }
 
 /** @param {string} kind @param {unknown} [error] */
@@ -471,6 +477,7 @@ export function createExtractionRunner(dependencies) {
             dependencies.logger({ event: "knowledge-extraction-agent-blocked", runId: command.runId });
             return completeExtraction("agent-blocked");
           }
+          if (currentPlan.frontier.length > 0 && currentPlan.frontier.every(url => !unvisitedPageUrl(url, scratchpad)) && coverageComplete(currentPlan, scratchpad) && currentPlan.unresolvedGaps.every(gap => gap.priority !== "high")) return completeExtraction("agent-complete");
           return fail({ kind: "ExtractionCoverageIncomplete" }, dependencies, command.runId);
         }
         if (dependencies.policy.maximumPagesPerExecution !== undefined && attemptedPages - previouslyAttemptedPages >= dependencies.policy.maximumPagesPerExecution) return { ok: true, value: freeze({ state: "awaiting-time-limit-decision", scratchpad, knowledgePointCount: scratchpad.acceptedHashes.length, pagesProcessed, stopReason: "paused" }) };
@@ -565,7 +572,8 @@ export function createExtractionRunner(dependencies) {
           return result!==null&&!result.ok?result:{ok:true,value:null};
         };
         if (dependencies.batchAcquirer !== undefined && scratchpad.pendingBatch === undefined) {
-          const urls = currentPlan.frontier.filter((url) => !scratchpad.processedUrls.includes(url) && !scratchpad.processedResponseUrls?.includes(url) && !scratchpad.failedPages?.some(page => page.url === url)).slice(0, Math.min(singleBatchRetries.has(nextUrl) ? 1 : dependencies.batchAcquirer.maximumBatchSize ?? 5, dependencies.policy.maximumPages - attemptedPages));
+          const batchKeys = new Set();
+          const urls = currentPlan.frontier.filter((url) => { const key = url.replace(/#$/, ""); if (!unvisitedPageUrl(url, scratchpad) || batchKeys.has(key)) return false; batchKeys.add(key); return true; }).slice(0, Math.min(singleBatchRetries.has(nextUrl) ? 1 : dependencies.batchAcquirer.maximumBatchSize ?? 5, dependencies.policy.maximumPages - attemptedPages));
           for (const url of urls) {
             if (new URL(url).origin !== root.origin || !withinPath(root, new URL(url))) return fail({ kind: "UnsafeDestination" }, dependencies, command.runId);
             if (dependencies.checkRobots !== undefined && url !== destination.href) {

@@ -1007,6 +1007,22 @@ Deno.test("unsupported linked assets are skipped while an unsupported source roo
   if (!rootFailure.ok) { assertEquals(rootFailure.error.kind, "ExtractionAcquisitionFailed"); assertEquals("causeKind" in rootFailure.error ? rootFailure.error.causeKind : undefined, "KnowledgePageTypeUnsupported"); }
 });
 
+Deno.test("empty URL fragments do not repeat a saved page in single or batch extraction", async () => {
+  const root = "https://example.test/", lesson = `${root}a`, urls = [root, `${root}#`, lesson, `${lesson}#`];
+  for (const batchMode of [false, true]) {
+    const fixture = setup();
+    /** @type {string[]} */ const calls = [];
+    /** @type {import('../src/features/knowledge-workflows/extraction.js').PageAcquirer['fetchPage']} */
+    const fetchPage = async command => { calls.push(command.url); return fixture.dependencies.acquirer.fetchPage(command); };
+    /** @type {NonNullable<import('../src/features/knowledge-workflows/extraction.js').ExtractionDependencies['batchAcquirer']>} */
+    const batchAcquirer = { key: "empty-fragment-batch", maximumBatchSize: 4, async fetchBatch(command) { const pages = []; for (const url of command.urls) { const page = await fetchPage({ ...command, url }); if (!page.ok) return page; pages.push(page.value); } return { ok: true, value: pages }; } };
+    const result = await createExtractionRunner({ ...fixture.dependencies, orderedUrls: urls, planner: inventoryPlanner(fixture, urls), acquirer: { fetchPage }, ...(batchMode ? { batchAcquirer } : {}) }).run({ ownerId: "owner-a", runId: "run-a", sourceId: "source-a", sourceRevision: 1, rootUrl: root, startedAtMs: 0, deadlineAtMs: 1_800_000 });
+    if (!result.ok) throw new Error(result.error.kind);
+    assertEquals(calls.join(","), `${root},${lesson}`);
+    assertEquals(result.value.scratchpad.processedUrls.join(","), `${root},${lesson}`);
+  }
+});
+
 Deno.test("batch-reviewed extraction commits in source order and resumes without repeating committed points", async () => {
   const fixture=setup();
   const original=fixture.dependencies.acquirer.fetchPage;
