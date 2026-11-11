@@ -155,6 +155,8 @@ Deno.test("live quiz prompts enumerate the exact generator and evaluator contrac
   }
   assertEquals(questionGeneratorPrompt.includes("retains independently verified knowledge"), true);
   assertEquals(questionGeneratorPrompt.includes("one correct key and one blank"), true);
+  assertEquals(questionGeneratorPrompt.includes("paired-question-generator-v11-schema-repair"), true);
+  assertEquals(questionGeneratorPrompt.includes("When feedback reports a malformed paired-quiz schema"), true);
   assertEquals(questionGeneratorPrompt.includes("not complete explanatory statements"), true);
   assertEquals(questionEvaluatorPrompt.includes("one non-empty string"), true);
   assertEquals(questionEvaluationSchema.schema.properties.feedback.type, "string");
