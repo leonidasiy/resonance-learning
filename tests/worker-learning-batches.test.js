@@ -225,6 +225,13 @@ Deno.test("learner D1 review projection withholds explanations and answer keys b
   assertEquals(Object.hasOwn(question, "acceptedAnswers"), false);
 });
 
+Deno.test("three-blank Review prompts omit redundant completion directions", async () => {
+  const due = rows(1).map(row => ({ ...row, studied_at: "2026-08-19T00:00:00.000Z", due_at: "2026-08-19T00:00:00.000Z", task_json: JSON.stringify({ id: "task-0", kind: "fill-blank", prompt: "____, ____, and ____ are related. Fill in all three blanks.", explanation: "The source explains the relation.", sourceAnchorIds: ["anchor-0"], choices: null, correctChoiceIds: null, acceptedAnswers: null, blankId: null, blanks: [1, 2, 3].map(index => ({ id: `blank-${index}`, acceptedAnswers: [`term-${index}`] })), revision: 1 }) }));
+  const service = createLearningBatchService({ database: /** @type {import("../worker/learning-batches-d1.js").D1DatabasePort} */ (/** @type {unknown} */ (new Database(due))), now: () => "2026-08-19T00:00:00.000Z", random: () => 0.1, logger: () => {} });
+  const result = await service.loadReview("owner-a", "2026-08-19");
+  assertEquals(result.ok && /** @type {{questions: {prompt: string}[]}} */ (result.value).questions[0].prompt, "____, ____, and ____ are related.");
+});
+
 Deno.test("learner D1 answer returns the stored explanation and correct choice only after a valid attempt", async () => {
   const due = rows().map((row) => ({ ...row, studied_at: "2026-08-19T00:00:00.000Z", due_at: "2026-08-19T00:00:00.000Z" }));
   const database = new Database(due);
@@ -244,12 +251,13 @@ Deno.test("learner D1 answer returns the stored explanation and correct choice o
 
 Deno.test("multi-blank review scores each part, keeps failed recall due, and hides keys before submission", async () => {
   const due = rows().map((row) => ({ ...row, studied_at: "2026-08-19T00:00:00.000Z", due_at: "2026-08-19T00:00:00.000Z" }));
-  due[0].task_json = JSON.stringify({ id: "task-0", kind: "fill-blank", prompt: "A ____ resolves to the ____.", explanation: "The dominant resolves to the tonic.", sourceAnchorIds: ["anchor-0"], choices: null, correctChoiceIds: null, acceptedAnswers: null, blankId: null, blanks: [{ id: "blank-1", acceptedAnswers: ["dominant"] }, { id: "blank-2", acceptedAnswers: ["tonic"] }], revision: 1 });
+  due[0].task_json = JSON.stringify({ id: "task-0", kind: "fill-blank", prompt: "A ____ resolves to the ____. Fill in both blanks.", explanation: "The dominant resolves to the tonic.", sourceAnchorIds: ["anchor-0"], choices: null, correctChoiceIds: null, acceptedAnswers: null, blankId: null, blanks: [{ id: "blank-1", acceptedAnswers: ["dominant"] }, { id: "blank-2", acceptedAnswers: ["tonic"] }], revision: 1 });
   const database = new Database(due);
   database.reviewRow = { batch_id: "review:owner-a:2026-08-19", learning_day: "2026-08-19", status: "open", item_ids_json: JSON.stringify(["task-0"]), revision: 1, created_at: "2026-08-19T00:00:00.000Z", completed_at: null };
   database.answerCount = 1;
   const service = createLearningBatchService({ database: /** @type {import("../worker/learning-batches-d1.js").D1DatabasePort} */ (/** @type {unknown} */ (database)), now: () => "2026-08-19T00:00:00.000Z", semanticGrader: async () => ({ ok: true, value: [1, 0] }), logger: () => {} });
   const review = await service.loadReview("owner-a", "2026-08-19");
+  assertEquals(review.ok && /** @type {{questions: {prompt: string}[]}} */ (review.value).questions[0].prompt, "A ____ resolves to the ____.");
   assertEquals(review.ok, true);
   if (!review.ok) return;
   const projected = /** @type {{ readonly questions: readonly Record<string, unknown>[] }} */ (review.value).questions[0];

@@ -498,6 +498,43 @@ Deno.test("typed quiz cards retain submitted answers and show canonical answers 
   }
 });
 
+Deno.test("answered choices identify correct, missed, and selected wrong options without an answer list", async () => {
+  const originalForm = Object.getOwnPropertyDescriptor(globalThis, "HTMLFormElement");
+  const originalData = Object.getOwnPropertyDescriptor(globalThis, "FormData");
+  class Form {
+    dataset = { learnerReviewBatch: "review:music", learnerReviewQuestion: "question-1" };
+    /** @type {((event: { preventDefault: () => void, currentTarget: Form }) => void) | null} */ submit = null;
+    /** @param {string} _name @param {Form["submit"]} listener */
+    addEventListener(_name, listener) { this.submit = listener; }
+  }
+  class Values {
+    /** @param {string} _name */ getAll(_name) { return ["choice-1", "choice-3"]; }
+    /** @param {string} _name */ get(_name) { return null; }
+  }
+  Object.defineProperty(globalThis, "HTMLFormElement", { configurable: true, value: Form });
+  Object.defineProperty(globalThis, "FormData", { configurable: true, value: Values });
+  try {
+    const question = { ...review.questions[0], kind: "multiple-choice", choices: [{ id: "choice-1", label: "Tritone" }, { id: "choice-2", label: "Perfect fifth" }, { id: "choice-3", label: "Octave" }] };
+    const controller = createLearnerController({ fetch: async input => String(input).endsWith("/answer")
+      ? response({ result: { correct: false, score: 0, completed: true, nextDueAt: "2026-09-02T12:00:00.000Z", feedback: { correctAnswer: "Tritone; Perfect fifth", explanation: "Source explanation.", components: [{ id: "choice-1", correct: true, correctAnswer: "Tritone" }, { id: "choice-2", correct: false, correctAnswer: "Perfect fifth" }, { id: "choice-3", correct: false, correctAnswer: "" }] } } })
+      : response({ result: { ...review, questions: [question] } }), baseUrl: "https://app.example.test/", timeoutMs: 1000, escapeHtml: value => value, now: () => "2026-09-01T12:00:00.000Z", createId: () => "test", onChange: () => {} });
+    await controller.loadReview();
+    const form = new Form();
+    controller.bind(/** @type {HTMLElement} */ (/** @type {unknown} */ ({ querySelector: () => null, querySelectorAll: (/** @type {string} */ selector) => selector === "[data-learner-review]" ? [form] : [] })));
+    form.submit?.({ preventDefault: () => {}, currentTarget: form });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const html = controller.renderReview();
+    assert(html.includes('class="good"><input type="checkbox" checked><span>Tritone <small>Correct</small>'), "Selected correct choice has clear feedback.");
+    assert(html.includes('class="good"><input type="checkbox" ><span>Perfect fifth <small>Correct</small>'), "Missed correct choice is identified.");
+    assert(html.includes('class="bad"><input type="checkbox" checked><span>Octave <small>Incorrect</small>'), "Selected wrong choice has distinct feedback.");
+    assert(!html.includes("Tritone; Perfect fifth"), "Choice feedback replaces the repeated answer list.");
+    assert(html.includes("Source explanation."), "Corrective explanation remains available.");
+  } finally {
+    if (originalForm) Object.defineProperty(globalThis, "HTMLFormElement", originalForm); else Reflect.deleteProperty(globalThis, "HTMLFormElement");
+    if (originalData) Object.defineProperty(globalThis, "FormData", originalData); else Reflect.deleteProperty(globalThis, "FormData");
+  }
+});
+
 
 Deno.test("Skip reveals feedback without an answer or progress request, handles retry and survives reload", async () => {
   const originalElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");

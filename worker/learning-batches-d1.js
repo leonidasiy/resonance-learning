@@ -119,7 +119,8 @@ async function publicQuestion(candidate, batchId) {
     }));
     choices = Object.freeze(ranked.sort((a, b) => a.rank.localeCompare(b.rank)).map(item => item.choice));
   }
-  return { questionId: candidate.questionId, knowledgeId: candidate.knowledgeId, title: candidate.title, prompt: candidate.question.prompt, kind: candidate.question.kind, choices, blanks: candidate.question.blanks?.map((blank) => ({ id: blank.id })) ?? null, pairedVariants: candidate.question.pairedVariants?.map((variant) => ({ id: variant.id, kind: variant.kind, prompt: variant.prompt, choices: variant.choices, blanks: variant.blanks?.map((blank) => ({ id: blank.id })) ?? null })) ?? null, sourceAnchorIds: candidate.question.sourceAnchorIds, revision: candidate.question.revision, media: candidate.media };
+  const cleanPrompt = (/** @type {string} */ prompt) => prompt.replace(/ Fill in (?:both|all three) blanks\.$/i, "");
+  return { questionId: candidate.questionId, knowledgeId: candidate.knowledgeId, title: candidate.title, prompt: cleanPrompt(candidate.question.prompt), kind: candidate.question.kind, choices, blanks: candidate.question.blanks?.map((blank) => ({ id: blank.id })) ?? null, pairedVariants: candidate.question.pairedVariants?.map((variant) => ({ id: variant.id, kind: variant.kind, prompt: cleanPrompt(variant.prompt), choices: variant.choices, blanks: variant.blanks?.map((blank) => ({ id: blank.id })) ?? null })) ?? null, sourceAnchorIds: candidate.question.sourceAnchorIds, revision: candidate.question.revision, media: candidate.media };
 }
 
 /** @param {PublicQuestion} question @returns {string | null} */

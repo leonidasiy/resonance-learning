@@ -242,7 +242,7 @@ pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .review-question-meta { color: var(--text-muted); font-size: 12px; margin: 0 0 16px; }
 .quiz-options { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; }
 .quiz-options label { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 16px; min-height: 56px; padding: 18px; border: 1px solid var(--border); border-radius: var(--control-radius); cursor: pointer; font-size: 18px; }
-.quiz-options label:has(input:checked) { background: var(--action-soft); border-color: var(--action); }
+:where(.quiz-options) label:has(input:checked) { background: var(--action-soft); border-color: var(--action); }
 .quiz-options input { width: 18px; height: 18px; margin: 3px 0 0; }
 .answer-feedback { padding: 12px 16px; color: var(--text); }
 .answer-feedback.is-correct { background: var(--success-soft); }
@@ -516,8 +516,8 @@ a.discover-result-action:is(:hover, :focus-visible){text-decoration:underline;ba
 
 .answered-choices { margin: 16px 0; }
 .answered-choices label { cursor: default; }
-.answered-choices .selected-correct { border: 2px solid var(--action); background: var(--surface); }
-.answered-choices .selected-incorrect { border: 2px solid var(--danger); background: var(--surface); }
+.answered-choices .good { border:2px solid var(--action); background:var(--success-soft); }
+.answered-choices .bad { border:2px solid var(--danger); background:var(--danger-soft); }
 .source-details p { overflow-wrap: anywhere; white-space: pre-wrap; }
 .card-source, .library-processing { min-width: 0; overflow-wrap: anywhere; }
 .library-processing { margin: 24px 0; display: grid; gap: 16px; }
