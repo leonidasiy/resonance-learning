@@ -1,0 +1,5 @@
+@layer ui-sdk;
+
+body:has(#app) .next-loading {
+  display: none;
+}

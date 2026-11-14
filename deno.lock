@@ -41,7 +41,12 @@
         "npm:@cloudflare/puppeteer@1.1.0",
         "npm:@types/node@22.20.1",
         "npm:@types/web-push@3.6.4",
+        "npm:@ui-sdk/core@~0.1.0-beta.1",
+        "npm:@ui-sdk/react@~0.1.0-beta.1",
+        "npm:next@^16.4.6",
         "npm:playwright-core@1.61.1",
+        "npm:react-dom@^19.3.1",
+        "npm:react@^19.3.1",
         "npm:sharp@0.35.5",
         "npm:unpdf@1.8.1",
         "npm:web-push@3.6.7"

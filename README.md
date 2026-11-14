@@ -50,6 +50,9 @@ The repository keeps application source, reusable tests, lockfiles, required
 runtime assets and setup examples. Agent skills, internal development notes,
 editor state, credentials, local databases, validation reports and build outputs
 stay local. `npm ci` recreates dependencies; `deno task build` recreates `dist/`.
+The frontend exports a React 19 Next.js page with ui-sdk styles. Existing
+learning screens run inside its client bridge; `deno task dev` starts the Next.js
+development server with those screens staged as local assets.
 The pinned `vendor/` files and source offline manifest are runtime inputs,
 so they remain included.
 

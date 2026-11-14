@@ -33,8 +33,14 @@ Deno.test("build command pins its build-only minifiers", async () => {
   assertEquals(ESBUILD_VERSION, "0.27.4");
   assertEquals(TERSER_VERSION, "5.44.1");
   assertEquals(
-    buildCommand,
+    denoConfiguration.tasks?.["build:legacy"],
     "deno run --allow-read --allow-write --allow-run=npx scripts/build.mjs",
+  );
+  assert(
+    buildCommand.startsWith("deno task build:legacy &&") &&
+      buildCommand.includes("scripts/next-static.mjs stage && npx next build &&") &&
+      buildCommand.endsWith("scripts/next-static.mjs publish"),
+    "The production build must export and publish the Next.js shell after the legacy assets.",
   );
 
   const buildSource = await Deno.readTextFile(
@@ -54,6 +60,26 @@ Deno.test("build command pins its build-only minifiers", async () => {
     !buildSource.includes('from "npm:') && !buildSource.includes("from 'npm:"),
     "The build-only dependency must not become a browser runtime import.",
   );
+});
+
+Deno.test("production shell exports Next.js with ui-sdk before application styles", async () => {
+  const html = await Deno.readTextFile("dist/index.html");
+  const styles = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)]
+    .map((match) => match[1]);
+  assert(styles.length >= 2, "Next.js must publish both ui-sdk and application CSS.");
+  const first = await Deno.readTextFile(`dist${styles[0]}`);
+  const second = await Deno.readTextFile(`dist${styles[1]}`);
+  assert(first.includes("@layer ui-sdk"), "The default ui-sdk styles must load first.");
+  assert(second.includes("@font-face"), "The project styles must load after ui-sdk.");
+  const manifest = /** @type {string[]} */ (JSON.parse(
+    await Deno.readTextFile("dist/asset-manifest.json"),
+  ));
+  assert(
+    manifest.some((path) => path.startsWith("./_next/static/chunks/") && path.endsWith(".js")),
+    "The offline cache must include the Next.js runtime.",
+  );
+  assert(html.includes("/_next/static/") && (await Deno.stat("dist/src/app.js")).isFile,
+    "The Next.js page must retain the existing application bundle.");
 });
 
 Deno.test("production artifacts reject numeric typed booleans", () => {
