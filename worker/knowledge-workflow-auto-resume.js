@@ -9,14 +9,15 @@ import {D1WorkflowStageRepository} from './knowledge-workflow-stages-d1.js';
 import {recordWorkflowCpuFailure} from './knowledge-workflow-cpu.js';
 
 /** Resume only interrupted work; explicit pauses, consent decisions and terminal runs stay authoritative.
- * @param {{database:import('./knowledge-workflow-d1.js').D1DatabasePort,binding:import('./main.js').KnowledgeWorkflowBinding,ownerId:string,now:()=>string,logger:(entry:import('./knowledge-workflow-logging.js').KnowledgeWorkflowLogEntry)=>void}} dependencies
+ * @param {{database:import('./knowledge-workflow-d1.js').D1DatabasePort,binding:import('./main.js').KnowledgeWorkflowBinding,ownerId:string,now:()=>string,logger:(entry:import('./knowledge-workflow-logging.js').KnowledgeWorkflowLogEntry)=>void,acquisitionAvailable?:()=>Promise<boolean>}} dependencies
  * @returns {Promise<{ok:true,value:number}|{ok:false,error:{kind:string}}>}
  */
-export async function resumeInterruptedKnowledgeWorkflows({database,binding,ownerId,now,logger}) {
+export async function resumeInterruptedKnowledgeWorkflows({database,binding,ownerId,now,logger,acquisitionAvailable}) {
   database=observeWorkflowDatabase(database,logger);
   const service=createKnowledgeWorkflowService(new D1KnowledgeWorkflowRepository({database,logger}),{now,createId:()=>crypto.randomUUID(),logger});
   const stages=new D1WorkflowStageRepository({database,now,logger});
   let resumed=0,failed=0;
+  /** @type {Promise<boolean>|undefined} */ let acquisitionReady;
   try {
     const selected=await database.prepare("SELECT r.run_id FROM knowledge_workflow_runs r JOIN library_sources s ON s.owner_id=r.owner_id AND s.source_id=r.source_id AND s.revision=r.source_revision AND s.state='active' WHERE r.owner_id=? AND r.state IN ('rights-assessment','robots-check','extraction-loop','extraction-finalized','per-point-quiz-loop','retryable-failure','awaiting-time-limit-decision') AND r.run_id=(SELECT latest.run_id FROM knowledge_workflow_runs latest WHERE latest.owner_id=r.owner_id AND latest.source_id=r.source_id AND latest.source_revision=r.source_revision ORDER BY latest.created_at DESC,latest.run_id DESC LIMIT 1) AND NOT EXISTS (SELECT 1 FROM knowledge_workflow_run_tombstones t WHERE t.owner_id=r.owner_id AND t.run_id=r.run_id) ORDER BY r.updated_at,r.run_id").bind(ownerId).all();
     if(!selected.success)return {ok:false,error:{kind:'WorkflowAutoResumeQueryFailed'}};
@@ -61,7 +62,9 @@ export async function resumeInterruptedKnowledgeWorkflows({database,binding,owne
           continue;
         }
         const failure=run.failureKind??'';
-        if(/KnowledgeModelPaymentRequired|Credential|WorkflowStageCallUncertain|:http-(401|402|403)|sqlite-(constraint|schema|too-big|limit)|automatic-retries-exhausted/u.test(failure))continue;
+        const acquisitionOutage=/^Acquisition(ServiceUnavailable|TransportFailed|ProtocolInvalid)(:automatic-retries-exhausted)?$/u.test(failure)&&acquisitionAvailable!==undefined;
+        if(acquisitionOutage){operation='acquisition-availability';if(!await(acquisitionReady??=acquisitionAvailable()))continue;}
+        if(/KnowledgeModelPaymentRequired|Credential|WorkflowStageCallUncertain|:http-(401|402|403)|sqlite-(constraint|schema|too-big|limit)/u.test(failure)||!acquisitionOutage&&failure.includes('automatic-retries-exhausted'))continue;
         if(failure.includes('d1-daily-quota')&&now().slice(0,10)===run.updatedAt.slice(0,10))continue;
         if(currentTime-Date.parse(run.updatedAt)<120_000)continue;
         if(run.state==='awaiting-time-limit-decision'&&(run.extractionDeadlineAt===null||currentTime<Date.parse(run.extractionDeadlineAt)+120_000))continue;
@@ -72,7 +75,7 @@ export async function resumeInterruptedKnowledgeWorkflows({database,binding,owne
           const reduced=await recordWorkflowCpuFailure({database,stages,run,observationKey:`hard-crash:${run.revision-1}`});
           if(!reduced.ok)throw new Error(reduced.error.kind);
         }
-        if(run.state==='retryable-failure'){
+        if(run.state==='retryable-failure'&&!acquisitionOutage){
           operation='check-recovery-progress';
           const controls=await database.prepare('SELECT idempotency_key,result_json,occurred_at FROM knowledge_workflow_controls WHERE owner_id=? AND run_id=? ORDER BY occurred_at DESC,control_id DESC LIMIT 4').bind(ownerId,run.runId).all();
           if(!controls.success)throw new Error('WorkflowAutoResumeQueryFailed');

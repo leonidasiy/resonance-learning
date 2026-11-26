@@ -88,6 +88,17 @@ test('private gateway permits only configured origin operations, strips unrelate
   assert.equal(calls.length, 1);
   fetchMock.mock.mockImplementation(async () => new Response(null, { status: 302, headers: { location: 'https://other.example' } }));
   assert.equal((await gateway.fetch(request(), env)).status, 502);
+  fetchMock.mock.mockImplementation(async () => new Response('Tunnel not found',{status:530,headers:{'content-type':'text/html'}}));
+  const offline=await gateway.fetch(request(),env);
+  assert.equal(offline.status,502);
+  assert.deepEqual(await offline.json(),{ok:false,error:{kind:'ConnectFailed',field:'acquisition-service'}});
+});
+
+test('a renewed tunnel keeps existing workflow routing identities without forwarding to the old address',async t=>{
+  const calls=[];
+  t.mock.method(globalThis,'fetch',async(url)=>{calls.push(String(url));return Response.json({ok:false,error:{kind:'OperationNotFound'}},{status:404});});
+  const response=await gateway.fetch(new Request('https://old-tunnel.example/v1/operations/synthetic-test-0001',{method:'DELETE',headers:{authorization:`Bearer ${token}`}}),{ACQUISITION_ORIGIN:'https://renewed-tunnel.example',ACQUISITION_CLIENT_ORIGIN:'https://old-tunnel.example'});
+  assert.equal(response.status,404);assert.deepEqual(calls,['https://renewed-tunnel.example/v1/operations/synthetic-test-0001']);
 });
 
 test('production launcher starts authenticated loopback without Chrome, logs no token, and shuts down', async () => {

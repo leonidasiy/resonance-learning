@@ -25,6 +25,33 @@ const wire = {
     visibleLinks: ["https://source.example/next"],
   },
 };
+Deno.test("an offline acquisition tunnel is a service outage, not a protocol error", async () => {
+  for (const response of [
+    new Response("Cloudflare tunnel unavailable", {status:502,headers:{"content-type":"text/html"}}),
+    Response.json({ok:false,error:{kind:"ConnectFailed",field:"acquisition-service"}},{status:502}),
+  ]) {
+    const client=createAcquisitionClient({binding:{fetch:async()=>response},endpoint:"https://service.test/",token:"fixture-token-a",policy,createId:()=>"fixture-id-0000"});
+    const result=await client.perform("request",{url:"https://source.example/robots.txt",rootUrl:"https://source.example/",purpose:"robots",maximumBytes:policy.robotsBytes,redirectLimit:0},new AbortController().signal);
+    assertEquals(result,{ok:false,error:{kind:"AcquisitionServiceUnavailable"}});
+  }
+});
+Deno.test("acquisition availability confirms authentication without a source request and rejects invalid bodies",async()=>{
+  for(const [response,expected] of [
+    [Response.json({ok:false,error:{kind:"OperationNotFound",field:"cancellation-tombstone"}},{status:404}),true],
+    [Response.json({ok:false,error:{kind:"AuthenticationRequired"}},{status:401}),false],
+    [new Response("unavailable",{status:502}),false],
+    [new Response("x".repeat(1025)),false],
+  ]){
+    const client=createAcquisitionClient({binding:{fetch:async(/** @type {Request} */ request)=>{
+      assertEquals(request.method,"DELETE");assertEquals(request.headers.get("authorization"),"Bearer fixture-token-a");assertEquals(request.url,"https://service.test/v1/operations/fixture-id-0000");return response;
+    }},endpoint:"https://service.test/",token:"fixture-token-a",policy,createId:()=>"fixture-id-0000"});
+    assertEquals(await client.available(),expected);
+  }
+});
+Deno.test("acquisition availability stays bounded when the binding ignores cancellation",async()=>{
+  const client=createAcquisitionClient({binding:{fetch:()=>new Promise(()=>{})},endpoint:"https://service.test/",token:"fixture-token-a",policy:{...policy,requestMilliseconds:5},createId:()=>"fixture-id-0000"});
+  assertEquals(await client.available(),false);
+});
 Deno.test("acquisition client standard Fetcher binding composes webpage robots and media with no credential forwarding", async () => {
   /** @type {Request[]} */
   const requests = [];

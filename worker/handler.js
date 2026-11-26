@@ -1242,6 +1242,7 @@ function publicReplayResult(value, ownerId) {
 
 /** @param {string | null} failureKind @param {string} state @param {number | null} remainingMs @returns {{ readonly reasonCode: "partial-failure" | "failed" | "paywall-or-login" | "robots-blocked" | "robots-check-unavailable" | "audio-video-transcription-unavailable" | "rights-not-verified" | "upload-content" | "retryable-failure", readonly message: string } | null} */
 function workflowStatusReason(failureKind, state, remainingMs) {
+  if(state==='retryable-failure'&&/^Acquisition(ServiceUnavailable|TransportFailed|ProtocolInvalid)(:automatic-retries-exhausted)?$/u.test(failureKind??''))return Object.freeze({reasonCode:'retryable-failure',message:'The website acquisition service is offline or could not return a valid response. Processing will resume automatically when the service reconnects. Your saved knowledge and quizzes have been retained. You can also choose Retry processing to check again.'});
   if(state==='retryable-failure'&&failureKind?.endsWith(':automatic-retries-exhausted')){
     const cause=workflowStatusReason(failureKind.slice(0,-':automatic-retries-exhausted'.length),state,remainingMs);
     return Object.freeze({reasonCode:'retryable-failure',message:`${cause?.message??'Processing could not continue.'} Automatic recovery stopped after four resumes without new published progress. Saved knowledge and quizzes are retained. Choose Continue processing to try again, or report this source if the problem persists.`});

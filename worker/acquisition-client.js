@@ -2,7 +2,7 @@
 import { FAILURE_KINDS, validatePolicy } from "../acquisition/contracts.ts";
 /** @import { Policy, RequestCommand, Observation, PageProjection, Failure } from '../acquisition/contracts.ts' */
 /** @template T @typedef {{readonly ok:true,readonly value:T}|{readonly ok:false,readonly error:ClientFailure}} ClientResult */
-/** @typedef {{readonly kind:Failure['kind']|'AcquisitionBindingUnavailable'|'AcquisitionAuthenticationUnavailable'|'AcquisitionEndpointInvalid'|'AcquisitionProtocolInvalid'|'AcquisitionTransportFailed'|'AcquisitionCancellationUnconfirmed',readonly field?:string}} ClientFailure */
+/** @typedef {{readonly kind:Failure['kind']|'AcquisitionBindingUnavailable'|'AcquisitionAuthenticationUnavailable'|'AcquisitionEndpointInvalid'|'AcquisitionProtocolInvalid'|'AcquisitionServiceUnavailable'|'AcquisitionTransportFailed'|'AcquisitionCancellationUnconfirmed',readonly field?:string}} ClientFailure */
 /** @typedef {Observation&{readonly projection?:PageProjection,readonly screenshot?:Uint8Array}} ClientObservation */
 /** @typedef {{readonly fetch:(request:Request)=>Promise<Response>}} Fetcher */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -186,6 +186,10 @@ export function createAcquisitionClient(deps) {
           ? failure(signal.aborted ? "Cancelled" : "TimedOut")
           : failure("AcquisitionCancellationUnconfirmed");
       }
+      if (response.status >= 500 && response.headers.get("content-type")?.split(";")[0].trim() !== "application/json") {
+        await response.body?.cancel();
+        return failure("AcquisitionServiceUnavailable");
+      }
       // Bound encoded protocol bytes while consuming; base64 inflates body by 4/3.
       const reader = response.body?.getReader();
       if (!reader) return failure("AcquisitionProtocolInvalid");
@@ -237,6 +241,7 @@ export function createAcquisitionClient(deps) {
         return failure("AcquisitionProtocolInvalid");
       }
       if (!result.ok) {
+        if (record(result.error) && result.error.kind === "ConnectFailed" && result.error.field === "acquisition-service") return failure("AcquisitionServiceUnavailable");
         if (
           !record(result.error) || typeof result.error.kind !== "string" ||
           !new Set(/** @type {readonly string[]} */ (FAILURE_KINDS)).has(
@@ -386,7 +391,30 @@ export function createAcquisitionClient(deps) {
       text: async () => new TextDecoder().decode(result.value.bytes),
     };
   }
-  return Object.freeze({ perform, mediaCapability, sourceBrowserRequest });
+  /** Probe the authenticated transport without fetching a source or starting model work. */
+  async function available() {
+    if (binding === null || endpoint === null || token === null) return false;
+    const controller=new AbortController(),signal=controller.signal;
+    /** @type {ReturnType<typeof setTimeout>|undefined} */ let timer;
+    /** @type {ReadableStreamDefaultReader<Uint8Array>|undefined} */ let reader;
+    const deadline=new Promise(resolve=>{timer=setTimeout(()=>{controller.abort();void reader?.cancel();resolve(false);},deps.policy.requestMilliseconds);});
+    try {
+      return await Promise.race([deadline,(async()=>{
+      const response=await binding.fetch(new Request(new URL(`/v1/operations/${deps.createId()}`,endpoint),{method:"DELETE",headers:{authorization:`Bearer ${token}`},signal}));
+      if(signal.aborted){await response.body?.cancel();return false;}
+      reader=response.body?.getReader();
+      if (!reader) return false;
+      const decoder=new TextDecoder();let length=0,body='';
+      try {
+        while(true){const item=await reader.read();if(signal.aborted)return false;if(item.done)break;length+=item.value.length;if(length>1024){await reader.cancel();return false;}body+=decoder.decode(item.value,{stream:true});}
+      }finally{reader.releaseLock();}
+      const result=JSON.parse(body+decoder.decode());
+      return response.status===404&&record(result)&&result.ok===false&&record(result.error)&&result.error.kind==="OperationNotFound";
+      })()]);
+    }catch(error){if(!(error instanceof Error))throw error;return false;}
+    finally{if(timer!==undefined)clearTimeout(timer);}
+  }
+  return Object.freeze({ perform, mediaCapability, sourceBrowserRequest, available });
 }
 class AcquisitionRequestFailure extends Error {
   /** @param {string} kind */

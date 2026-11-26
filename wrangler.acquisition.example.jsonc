@@ -9,6 +9,7 @@
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
-    "ACQUISITION_ORIGIN": "https://your-acquisition.example.com"
+    "ACQUISITION_ORIGIN": "https://your-acquisition.example.com",
+    "ACQUISITION_CLIENT_ORIGIN": "https://acquisition.internal"
   }
 }

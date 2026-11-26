@@ -244,6 +244,22 @@ test('provider payment rejection waits for owner recovery instead of automatic r
  }finally{f.db.close();}
 });
 
+test('an acquisition outage waits without burning resumes and recovers even a legacy exhausted run',async()=>{
+ for(const failureKind of ['AcquisitionServiceUnavailable','AcquisitionProtocolInvalid:automatic-retries-exhausted']) {
+  const f=await fixture('extraction-loop');try{
+   let available=false,probes=0;
+   f.dependencies.acquisitionAvailable=async()=>{probes++;return available;};
+   f.unwrap(await f.service.advance({ownerId:f.run.ownerId,runId:f.run.runId,expectedRevision:f.run.revision,nextState:'retryable-failure',failureKind}));
+   f.setStatus('waiting');f.advanceTime(120_000);
+   const stopped=await f.read();
+   for(let n=0;n<6;n++){assert.deepEqual(await f.tick(),{ok:true,value:0});f.advanceTime(120_000);}
+   assert.deepEqual(await f.read(),stopped);assert.deepEqual(f.counts(),{events:0,restarts:0});assert.equal(probes,6);
+   available=true;assert.deepEqual(await f.tick(),{ok:true,value:1});
+   assert.equal((await f.read()).state,'extraction-loop');assert.deepEqual(f.counts(),{events:0,restarts:1});
+  }finally{f.db.close();}
+ }
+});
+
 test('automatic recovery stops after four resumes without published progress; owner resume resets it',async()=>{
  const f=await fixture();try{
   for(let n=0;n<5;n++){

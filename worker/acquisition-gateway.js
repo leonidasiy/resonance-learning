@@ -2,9 +2,9 @@
 
 /** Private service binding bridge. Only the configured acquisition origin receives requests. */
 export default {
-  /** @param {Request} request @param {{ACQUISITION_ORIGIN?:string}} env */
+  /** @param {Request} request @param {{ACQUISITION_ORIGIN?:string,ACQUISITION_CLIENT_ORIGIN?:string}} env */
   async fetch(request, env) {
-    const unavailable = () => Response.json({ ok: false, error: { kind: "ConnectFailed" } }, { status: 502 });
+    const unavailable = () => Response.json({ ok: false, error: { kind: "ConnectFailed", field: "acquisition-service" } }, { status: 502 });
     let origin;
     try {
       origin = new URL(env.ACQUISITION_ORIGIN ?? "");
@@ -13,7 +13,7 @@ export default {
       return unavailable();
     }
     const incoming = new URL(request.url);
-    if (incoming.origin !== origin.origin || incoming.search || !/^\/v1\/operations\/[a-zA-Z0-9_-]{12,80}$/.test(incoming.pathname) || !["POST", "DELETE"].includes(request.method)) {
+    if (![origin.origin,env.ACQUISITION_CLIENT_ORIGIN].includes(incoming.origin) || incoming.search || !/^\/v1\/operations\/[a-zA-Z0-9_-]{12,80}$/.test(incoming.pathname) || !["POST", "DELETE"].includes(request.method)) {
       return Response.json({ ok: false, error: { kind: "CommandInvalid" } }, { status: 400 });
     }
     const authorization = request.headers.get("authorization");
@@ -29,6 +29,7 @@ export default {
         ...{ duplex: "half" },
       });
       if (response.status >= 300 && response.status < 400) { await response.body?.cancel(); return unavailable(); }
+      if (response.status >= 500 && response.headers.get("content-type")?.split(";")[0].trim() !== "application/json") { await response.body?.cancel(); return unavailable(); }
       return response;
     } catch {
       return unavailable();

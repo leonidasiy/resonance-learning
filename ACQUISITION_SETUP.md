@@ -151,6 +151,25 @@ only one side. Keep private configs and tokens in private backup storage.
 Restart this launcher/tunnel after a computer restart. Stop both terminals with
 Ctrl+C when you no longer need acquisition; cloud storage/jobs still exist.
 
+For a supervised Quick Tunnel, `scripts/acquisition-tunnel.mjs` starts cloudflared,
+checks authenticated connectivity and publishes each new destination to your
+private bridge. Run it under your operating system's service manager alongside
+the acquisition server, with automatic restart and the same `.env.acquisition`.
+Its arguments are the installed cloudflared executable, Wrangler's JavaScript
+CLI file, and your private bridge configuration path. It uses your existing
+Cloudflare login; an expired login or failed bridge deployment needs attention.
+Set `vars.ACQUISITION_CLIENT_ORIGIN` in that bridge config to the **current** main
+app's `PUBLIC_ACQUISITION_ENDPOINT` first. This preserves existing workflow
+routing while `ACQUISITION_ORIGIN` changes, so reconnection needs only a bridge
+deployment. Keep this routing identity fixed. For a new setup you can use
+`https://acquisition.internal` on both sides; it is a service-binding identity,
+not a public DNS destination. The authenticated acquisition service still needs
+an awake, online host, and Quick Tunnels still have no uptime guarantee.
+
+During an acquisition outage, background recovery checks connectivity without
+fetching a source or starting AI work. It waits without spending workflow
+resume attempts and resumes interrupted sources when connectivity returns.
+
 | Symptom | Check |
 | --- | --- |
 | Tool not found | Install Node/Deno/cloudflared, reopen the terminal; run commands from the project folder. |

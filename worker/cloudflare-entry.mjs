@@ -6,6 +6,8 @@ import { createReminderRuntime } from "./reminders/runtime.js";
 import { createUnifiedWorkerRouter } from "./static-router.js";
 import { routeWithWorkerVersion } from "./versioned-router.js";
 import { resumeInterruptedKnowledgeWorkflows } from "./knowledge-workflow-auto-resume.js";
+import { createAcquisitionClient } from "./acquisition-client.js";
+import { ACQUISITION_POLICY } from "./acquisition-policy.js";
 
 export {
   PublisherTranscriptAuthorizationDurableObject,
@@ -38,7 +40,9 @@ export default {
     if (event.cron === "* * * * *") {
       const logger = (record) => console.info(JSON.stringify(record));
       const recovery = environment.KNOWLEDGE_WORKFLOW_ENABLED === "true"
-        ? resumeInterruptedKnowledgeWorkflows({database:environment.SOURCE_LIBRARY_DB,binding:environment.KNOWLEDGE_WORKFLOW,ownerId:environment.ACCESS_OWNER_ID,now:()=>new Date().toISOString(),logger}).then(result=>{if(!result.ok)throw new Error(result.error.kind);})
+        ? resumeInterruptedKnowledgeWorkflows({database:environment.SOURCE_LIBRARY_DB,binding:environment.KNOWLEDGE_WORKFLOW,ownerId:environment.ACCESS_OWNER_ID,now:()=>new Date().toISOString(),logger,
+          acquisitionAvailable:createAcquisitionClient({binding:environment.PUBLIC_ACQUISITION,endpoint:environment.PUBLIC_ACQUISITION_ENDPOINT,token:environment.PUBLIC_ACQUISITION_TOKEN,policy:ACQUISITION_POLICY,createId:()=>crypto.randomUUID()}).available,
+        }).then(result=>{if(!result.ok)throw new Error(result.error.kind);})
         : Promise.resolve();
       const reminderDispatch = (async () => {
         if ([environment.VAPID_PUBLIC_KEY,environment.VAPID_PRIVATE_KEY,environment.VAPID_SUBJECT].every(value=>value===undefined)) {
