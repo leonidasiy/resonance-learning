@@ -39,6 +39,15 @@ Deno.test("Library keeps watching an acquisition outage and displays automatic r
   assert(f.page.renderProcessingStatus().includes('extracting knowledge points'),'The open page must show resumed extraction');
  }
 });
+Deno.test('Library watches an elapsed time envelope until automatic continuation arrives',async()=>{
+ for(const state of ['extraction-loop','awaiting-time-limit-decision']){
+  let resumed=false;const waiting=status('a',state);waiting.run.remainingMs=0;waiting.reasonCode=state==='extraction-loop'?'retryable-failure':null;
+  const f=fixture(async input=>String(input).includes('source-status')?Response.json({result:resumed?status('a','extraction-loop'):waiting}):Response.json({result:{items:[source('a')],interestAreas:[],nextCursor:null}}));
+  await f.page.load();assert(f.timers.size===1,'Automatic continuation must remain observable');
+  assert(f.page.renderProcessingStatus()==='','A checkpoint wait must not claim active processing');
+  resumed=true;await f.poll();assert(f.page.renderProcessingStatus().includes('extracting knowledge points'),'The existing page must display continued processing');
+ }
+});
 Deno.test("global processing discovers later pages after refresh and remains independent of Library search",async()=>{
  let state="extraction-loop";const requested=/** @type {string[]} */([]);
  const f=fixture(async input=>{const url=new URL(String(input));requested.push(url.pathname+url.search);

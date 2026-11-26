@@ -23,7 +23,7 @@ function validSearchOptions(value) {
 }
 /** @param {readonly WorkflowSourceStatus[]} statuses */
 function workflowNeedsRefresh(statuses) {
-  return statuses.some(status => status.reasonCode === 'retryable-failure') || countProcessingWorkflowStatuses(statuses);
+  return statuses.some(status => status.run?.state === 'awaiting-time-limit-decision' || status.reasonCode === 'retryable-failure') || countProcessingWorkflowStatuses(statuses);
 }
 
 /** @typedef {{ readonly observe: (element: Element) => void, readonly disconnect: () => void }} PageObserver */
