@@ -73,6 +73,7 @@ export function createAcquisitionRuntime(
     readonly maximumActive: number;
     readonly maximumRetained: number;
     readonly retentionMilliseconds: number;
+    readonly dnsServers?: readonly string[];
     readonly decodeImage?: Renderer["decodeImage"];
     readonly transport: { readonly kind: "loopback-fixture" | "loopback" } | {
       readonly kind: "tls";
@@ -84,7 +85,11 @@ export function createAcquisitionRuntime(
   const gate = createGate({
     policy: deps.policy,
     addressAllowed: createAddressPolicy(),
-    resolve: createSystemResolver(deps.policy.requestMilliseconds),
+    resolve: createSystemResolver(deps.policy.requestMilliseconds, options => {
+      const resolver = new Resolver(options);
+      if (deps.dnsServers !== undefined) resolver.setServers([...deps.dnsServers]);
+      return resolver;
+    }),
     dial: pinnedRequest,
     logger: deps.logger,
   });

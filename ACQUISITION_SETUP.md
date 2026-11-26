@@ -41,6 +41,13 @@ It should report loopback port 8788. Leave this terminal running. Stop with
 **Ctrl+C**. It accepts only authenticated operation requests, not a browsable
 home page; a blank/denied result at its root is not a health check failure.
 
+If this computer's DNS cannot resolve a source, set `ACQUISITION_DNS_SERVERS`
+in `.env.acquisition` to comma-separated DNS server IP addresses and restart
+the acquisition server. This changes only acquisition's DNS provider, which
+receives source hostnames; it leaves system DNS unchanged. Both IPv4 and IPv6
+lookups must still succeed or explicitly report no records, and all returned
+addresses still pass the public-address and connection-pinning checks.
+
 ## 2. Give it an HTTPS address
 
 The cloud app cannot reach your computer's `localhost`. An HTTPS tunnel can

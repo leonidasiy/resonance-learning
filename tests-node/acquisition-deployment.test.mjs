@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createSocket } from 'node:dgram';
 import sharp from 'sharp';
 import { createAcquisitionDeployment } from '../acquisition/deployment.ts';
 import { createImageDecoder } from '../acquisition/image-decoder.ts';
@@ -24,6 +25,27 @@ test('deployment defaults bind loopback and keep authentication without Chrome',
   assert.equal((await response.json()).error.kind, 'OperationNotFound');
 });
 
+test('service-specific DNS resolves both families and still rejects private source addresses', async () => {
+  const dns=createSocket('udp4'),queries=[];
+  dns.on('message',(query,peer)=>{
+    const type=query.readUInt16BE(query.length-4);queries.push(type);
+    const response=Buffer.concat([query,...(type===1?[Buffer.from([0xc0,0x0c,0,1,0,1,0,0,0,60,0,4,127,0,0,1])]:[])]);
+    response.writeUInt16BE(0x8180,2);response.writeUInt16BE(type===1?1:0,6);
+    dns.send(response,peer.port,peer.address);
+  });
+  await new Promise(resolve=>dns.bind(0,'127.0.0.1',resolve));
+  let runtime;
+  try {
+    runtime=await deployment({ACQUISITION_TOKEN:token,ACQUISITION_DNS_SERVERS:`127.0.0.1:${dns.address().port}`});
+    const response=await runtime.handler(new Request('https://acquisition.example/v1/operations/synthetic-dns-0001',{
+      method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
+      body:JSON.stringify({action:'request',request:{url:'https://fixture.example/',rootUrl:'https://fixture.example/',purpose:'page',maximumBytes:100,redirectLimit:0}}),
+    }));
+    assert.equal((await response.json()).error.kind,'AddressRejected');
+    assert.deepEqual(queries.sort((a,b)=>a-b),[1,28]);
+  }finally{runtime?.server.close();await new Promise(resolve=>dns.close(resolve));}
+});
+
 test('deployment reads token files and rejects unsafe or incomplete listener configuration', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'acquisition-deployment-'));
   try {
@@ -39,6 +61,8 @@ test('deployment reads token files and rejects unsafe or incomplete listener con
       { ACQUISITION_TRANSPORT: 'tls' }, { ACQUISITION_TLS_KEY_FILE: file },
       { ACQUISITION_MAX_ACTIVE: '3', ACQUISITION_MAX_RETAINED: '2' },
       { ACQUISITION_CHROME_PATH: 'chrome' },
+      { ACQUISITION_DNS_SERVERS: '' }, { ACQUISITION_DNS_SERVERS: 'dns.invalid' },
+      { ACQUISITION_DNS_SERVERS: '8.8.8.8,' },
     ]) await assert.rejects(deployment({ ACQUISITION_TOKEN: token, ...overrides }), /ConfigurationInvalid/);
   } finally { await rm(directory, { recursive: true }); }
 });

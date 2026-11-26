@@ -1,5 +1,6 @@
 import { readFile, access } from "node:fs/promises";
 import { isAbsolute } from "node:path";
+import { Resolver } from "node:dns/promises";
 import type { Logger } from "./contracts.ts";
 import { createAcquisitionRuntime } from "./runtime.ts";
 import { createImageDecoder } from "./image-decoder.ts";
@@ -46,8 +47,15 @@ export async function createAcquisitionDeployment(deps: {
   const maximumActive = integer("ACQUISITION_MAX_ACTIVE", 2);
   const maximumRetained = integer("ACQUISITION_MAX_RETAINED", 1000);
   if (maximumRetained < maximumActive) invalid("ACQUISITION_MAX_RETAINED");
+  const dnsServers = env.ACQUISITION_DNS_SERVERS?.split(",").map(server => server.trim());
+  if (dnsServers !== undefined) {
+    if (dnsServers.some(server => !server)) invalid("ACQUISITION_DNS_SERVERS");
+    try { const resolver = new Resolver(); resolver.setServers(dnsServers); resolver.cancel(); }
+    catch { invalid("ACQUISITION_DNS_SERVERS"); }
+  }
   const runtime = createAcquisitionRuntime({
     policy, tokens: new Map([[token!, "self-hosted-client"]]),
+    dnsServers,
     chromePath: chromePath ?? deps.nodePath,
     nodePath: deps.nodePath,
     platform: chromePath ? deps.platform : "portable",

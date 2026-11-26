@@ -1256,7 +1256,8 @@ function workflowStatusReason(failureKind, state, remainingMs) {
   const normalized = (failureKind ?? "").toLowerCase();
   if(state==='retryable-failure'){
     let cause;
-    if(/d1-daily-quota/u.test(normalized))cause="The database's daily Free plan allowance has been exhausted. Automatic recovery waits until the allowance resets at midnight UTC; retrying before then will not help.";
+    if(normalized==='dnsfailed')cause="The source website's address could not be resolved by the acquisition service's DNS servers. The website or DNS resolver may be unavailable. Retry processing once DNS is working, or upload an authorized copy of the source.";
+    else if(/d1-daily-quota/u.test(normalized))cause="The database's daily Free plan allowance has been exhausted. Automatic recovery waits until the allowance resets at midnight UTC; retrying before then will not help.";
     else if(/workflowcputimelimitexceeded|cpu-limit/u.test(normalized))cause="Processing reached Cloudflare's CPU time limit after retries. Continue processing to resume from saved progress with smaller batches. If it stops again, report this source so the remaining expensive step can be fixed.";
     else if(/workflowsubrequestlimitexceeded|subrequest-limit/u.test(normalized))cause="Processing reached Cloudflare's request limit for one execution. Continue processing to resume from saved progress with smaller batches.";
     else if(/browsercreditlimitexceeded/u.test(normalized))cause="The source's interactive browser credit allowance is exhausted. Continue processing with an available alternative capture service, or upload an authorized copy of remaining content.";

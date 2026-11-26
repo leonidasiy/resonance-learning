@@ -230,6 +230,8 @@ Deno.test('source cards explain resource, provider, persistence and exhausted re
     ['AcquisitionProtocolInvalid','acquisition service'],
     ['AcquisitionServiceUnavailable','resume automatically'],
     ['AcquisitionProtocolInvalid:automatic-retries-exhausted','resume automatically'],
+    ['DnsFailed','DNS'],
+    ['DnsFailed:automatic-retries-exhausted','DNS'],
     ['BrowserCreditLimitExceeded:automatic-retries-exhausted','browser credit allowance'],
     ['ExtractionCoverageIncomplete','not been marked complete'],
     ['WorkflowCpuTimeLimitExceeded:automatic-retries-exhausted','four resumes'],
