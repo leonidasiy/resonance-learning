@@ -34,3 +34,21 @@ for(const defect of ['missing','unresolved','foreign','duplicate','none'])test(`
   const result=await auditMaterialImageCoverage({taskId:'image',input:{sections:[{...section,locator:'image:1'}],coverageGoals:[],visualId:'image:1'},maxOutputTokens:1000,generate:async c=>{assert.equal(c.phase,'normalization');return {ok:true,value:{observationCoverage:coverage,additionalCandidates:[]}};}},observations,{url,notes:'Draft',candidates:[point]});
   assert.equal(result.ok,defect==='none');if(!result.ok)assert.equal(result.error.kind,'MaterialImageCoverageIncomplete');
 });
+
+test('image coverage corrects a cropped repeat using saved knowledge instead of replaying the rejected audit',async()=>{
+ const calls=[],attachments=[{id:'synthetic-image',mediaType:'image/png',bytes:new Uint8Array([1])}];
+ const result=await auditMaterialImageCoverage({taskId:'image',attachments,input:{sections:[{...section,locator:'image:1'}],coverageGoals:[],visualId:'image:1',previousKnowledge:[{id:'saved-bottom',summary:'The complete lower relationship.'}]},maxOutputTokens:1000,logger:()=>{},generate:async command=>{
+  calls.push(command);assert.equal(command.attachments,attachments);
+  const coverage=[{observationId:'top',disposition:'candidates',candidateHashes:['top'],reason:'A supported relationship.'},{observationId:'bottom',disposition:calls.length===1?'unresolved':'excluded',candidateHashes:[],reason:'The cropped lower fragment repeats the complete saved relationship.'}];
+  if(calls.length===2){assert.equal(command.input.validationFailure.kind,'MaterialImageCoverageIncomplete');assert.equal(command.input.validationFailure.previousResponse.observationCoverage[1].disposition,'unresolved');}
+  return {ok:true,value:{additionalCandidates:[],observationCoverage:coverage}};
+ }},observations,{url,notes:'Draft',candidates:[point]});
+ assert.equal(result.ok,true);assert.equal(calls.length,2);assert.notEqual(calls[0].taskId,calls[1].taskId);assert(calls.every(c=>!c.taskId.includes('image-coverage-v1')));
+ assert.equal(result.value.observationCoverage[1].disposition,'excluded');
+});
+
+for(const technicalRetries of [true,false])test(`genuinely unresolved image coverage remains incomplete with technicalRetries=${technicalRetries}`,async()=>{
+ let calls=0;
+ const result=await auditMaterialImageCoverage({taskId:'image',technicalRetries,input:{sections:[{...section,locator:'image:1'}],coverageGoals:[],visualId:'image:1'},maxOutputTokens:1000,logger:()=>{},generate:async()=>{calls++;return {ok:true,value:{additionalCandidates:[],observationCoverage:[{observationId:'top',disposition:'unresolved',candidateHashes:[],reason:'The source is unreadable.'},{observationId:'bottom',disposition:'unresolved',candidateHashes:[],reason:'The source is unreadable.'}]}};}},observations,{url,notes:'Draft',candidates:[point]});
+ assert.equal(result.ok,false);assert.equal(calls,technicalRetries?4:1);assert.equal(result.error.technicalRetriesExhausted,true);
+});
