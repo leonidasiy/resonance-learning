@@ -458,7 +458,7 @@ export function createLearnerController(dependencies) {
     if (review.state === "loading" && review.value === null) return feedMarkup(4);
     if (review.state === "error" && review.value === null) return statePanel("Review", friendly(review.error), "retry-learner-review");
     const value = review.value;
-    const error = (pending.has("review-refresh") ? feedMarkup(47, pendingSpark()) : "") + (review.error === null ? "" : feedMarkup(20, escapeHtml(friendly(review.error))));
+    const error = review.error === null ? "" : feedMarkup(20, escapeHtml(friendly(review.error)));
     if (value === null || value.questions.length === 0) return renderDailyGoal("review") + error + feedMarkup(2, renderReviewRefresh());
     const nextBatch = countdowns.has("batch") ? feedMarkup(31, countdownButton("batch", "Next batch", "next-review-batch")) : "";
     return feedMarkup(17, renderDailyGoal("review"), String(value.questions.length), value.questions.length === 1 ? "" : "s", renderReviewRefresh(), error, value.questions.map(renderQuestion).join("") + nextBatch);

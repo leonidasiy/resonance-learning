@@ -67,6 +67,7 @@ Deno.test("Review offers Refresh for unfinished, completed and empty batches wit
       assert(requests === (succeed ? 2 : 1), "Duplicate pending clicks send one request");
       const pending = controller.renderReview();
       assert(pending.includes('aria-busy="true"') && pending.includes("Finding questions…") && pending.includes("disabled"), "Pending refresh has visible feedback and is disabled");
+      assert(!pending.includes("Preparing your next batch"), "Refresh uses one loading message");
       if (projection.batch?.status === "open") assert(pending.includes('<input disabled '), "Answer inputs are disabled while replacing the batch");
       settle(succeed ? response({ result: { ...review, batch: { ...review.batch, batchId: "review:replacement" }, questions: [{ ...review.questions[0], prompt: "Replacement question" }] } }) : new Response(JSON.stringify({ error: "LearningBatchPersistenceFailed" }), { status: 503 }));
       await new Promise(resolve => setTimeout(resolve, 0));

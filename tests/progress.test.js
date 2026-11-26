@@ -206,3 +206,21 @@ Deno.test("cached Progress remains visible during a refresh, failure and success
   next = Promise.resolve(Response.json({ result: result.value })); await page.load();
   assert(page.render().includes('class="progress-summary"') && !page.render().includes('role="alert"'), "Retry replaces the error with the refreshed content.");
 });
+
+Deno.test("calendar intensity follows the current daily activity goal, not the busiest day", async () => {
+  const result = buildProgress(input({ studies: [{ completedAt: now, itemCount: 2 }, { completedAt: "2026-09-18T12:00:00Z", itemCount: 5 }] }));
+  if (!result.ok) throw new Error("Invalid fixture");
+  let targets = { dailyStudyTarget: 4, dailyRecallLimit: 2 };
+  const page = createProgressPage({ fetch: async () => Response.json({ result: result.value }), baseUrl: "https://example.test/", escapeHtml: value => value, onChange() {}, getSettings: () => targets });
+  await page.load();
+  const opacity = () => Math.min(1, Number(page.render().match(/aria-label="2026-09-19: [^"]*"[^>]*><rect[^>]*opacity="([^"]+)"/)?.[1]));
+  assert(opacity() === .5, "Half of each goal gives partial intensity");
+  targets = { dailyStudyTarget: 2, dailyRecallLimit: 1 };
+  assert(opacity() === 1, "Lower fulfilled goals immediately give maximum intensity despite a busier day");
+  targets = { dailyStudyTarget: 1, dailyRecallLimit: 2 };
+  assert(opacity() === 1, "Combined daily activity reaching the combined target gives full intensity");
+  targets = { dailyStudyTarget: 2, dailyRecallLimit: 0 };
+  assert(opacity() === 1, "A disabled review goal does not prevent full study completion");
+  targets = { dailyStudyTarget: 1, dailyRecallLimit: 1 };
+  assert(opacity() === 1, "Exceeding goals stays capped at maximum intensity");
+});

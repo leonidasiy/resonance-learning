@@ -559,7 +559,7 @@ async function loadActiveRoute() {
     if (view === "progress") {
       if (progressPage === null) {
         const module = await import("./features/progress/page.js");
-        progressPage = module.createProgressPage({ fetch, baseUrl: new URL("./", location.href).href, escapeHtml, onChange: () => render() });
+        progressPage = module.createProgressPage({ fetch, baseUrl: new URL("./", location.href).href, escapeHtml, onChange: () => render(), getSettings: () => dailySettings });
       }
       progressDirty = false;
       progressDay = new Date().toISOString().slice(0, 10);

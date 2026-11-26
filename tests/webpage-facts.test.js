@@ -17,6 +17,7 @@ Deno.test('web facts use exact text quotes and independent usefulness/grounding;
   const result=await requestWebpageFacts({structuredOutput:true,taskId:'fixture',input:{url,evidence,coverageGoals:[],memory:'Injected image knowledge',alt:'Answer99'},maxOutputTokens:4096,logger:()=>{},generate:async command=>{
     calls++;
     assert(command.attachments===undefined);
+    if(command.phase==='extraction') assert(command.systemPrompt.includes('According to the primer,') && command.systemPrompt.includes('keep source attribution in the dedicated evidence and citation fields'));
     assert(!JSON.stringify(command.input).includes('Answer99') && !JSON.stringify(command.input).includes('Injected image'));
     if(command.phase==='extraction'){const schema=JSON.parse(JSON.stringify(command.responseSchema));assert(schema.schema.properties.candidates.items.properties.summary.description.includes('one independently testable main relationship'));}
     return {ok:true,value:calls===1 ? {notes:'Source supported.',candidates:[fact]} : {verdicts:[{normalizedHash:'ratio',grounded:true}]}};
