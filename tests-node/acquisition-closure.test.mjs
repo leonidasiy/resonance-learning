@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createSocket } from 'node:dgram';
+import { Resolver } from 'node:dns/promises';
+import { createSystemResolver } from '../acquisition/runtime.ts';
 import { createGate, validatePolicy } from '../acquisition/gate.ts';
 import { createAcquisitionClient } from '../worker/acquisition-client.js';
 import { createMediaPublicEgress } from '../src/features/knowledge-workflows/media.js';
@@ -7,6 +10,22 @@ import { ACQUISITION_POLICY as policy } from '../worker/acquisition-policy.js';
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 const command = {url:'https://source.example/a',rootUrl:'https://source.example/',purpose:'page',maximumBytes:100,redirectLimit:3};
 const budget = () => ({encoded:0,decoded:0,resources:0,pixels:0});
+
+test('system resolver recovers dropped DNS responses within the existing request deadline',async()=>{
+  const dns=createSocket('udp4'),queries=new Map();
+  dns.on('message',(query,peer)=>{
+    const type=query.readUInt16BE(query.length-4),count=(queries.get(type)??0)+1;queries.set(type,count);
+    if(count===1)return;
+    const response=Buffer.concat([query,...(type===1?[Buffer.from([0xc0,0x0c,0,1,0,1,0,0,0,60,0,4,8,8,8,8])]:[])]);
+    response.writeUInt16BE(0x8180,2);response.writeUInt16BE(type===1?1:0,6);dns.send(response,peer.port,peer.address);
+  });
+  await new Promise(resolve=>dns.bind(0,'127.0.0.1',resolve));
+  try{
+    const resolve=createSystemResolver(1000,options=>{const r=new Resolver(options);r.setServers([`127.0.0.1:${dns.address().port}`]);return r;});
+    assert.deepEqual(await resolve('fixture.example',AbortSignal.timeout(1000)),['8.8.8.8']);
+    assert.deepEqual([...queries].sort((a,b)=>a[0]-b[0]),[[1,2],[28,2]]);
+  }finally{await new Promise(resolve=>dns.close(resolve));}
+});
 
 // Exercise the complete media -> Worker client -> authenticated cancellation path.
 for (const mode of ['delayed', 'rejected', 'absent', 'forged-status']) {

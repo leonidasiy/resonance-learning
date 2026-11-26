@@ -29,7 +29,8 @@ export function createSystemResolver(
     if (typeof hostname !== "string" || hostname.trim() === "" || !(signal instanceof AbortSignal)) {
       throw new TypeError("CommandInvalid");
     }
-    const resolver = createResolver({ timeout: timeoutMilliseconds, tries: 1 });
+    // DNS retry scheduling needs room beyond its per-attempt timeout; the outer deadline stays authoritative.
+    const resolver = createResolver({ timeout: Math.max(1, Math.floor(timeoutMilliseconds / 4)), tries: 2 });
     const abort = () => resolver.cancel();
     signal.addEventListener("abort", abort, { once: true });
     try {
