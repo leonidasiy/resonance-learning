@@ -21,7 +21,10 @@ const freeze = Object.freeze;
 function validSearchOptions(value) {
   return typeof value === "object" && value !== null && "searchScope" in value && (value.searchScope === "knowledge" || value.searchScope === "sources") && "externalProcessingAllowed" in value && typeof value.externalProcessingAllowed === "boolean";
 }
-const WORKFLOW_STATUS_REFRESH_MS = 60_000;
+/** @param {readonly WorkflowSourceStatus[]} statuses */
+function workflowNeedsRefresh(statuses) {
+  return statuses.some(status => status.reasonCode === 'retryable-failure') || countProcessingWorkflowStatuses(statuses);
+}
 
 /** @typedef {{ readonly observe: (element: Element) => void, readonly disconnect: () => void }} PageObserver */
 /** @typedef {{ readonly batchId: string, readonly learningDay: string, readonly status: "open" | "completed", readonly itemIds: readonly string[], readonly revision: number, readonly createdAt: string, readonly completedAt: string | null }} LibraryBatchModel */
@@ -166,7 +169,7 @@ export function createLibraryPage(dependencies) {
         statusUnavailable = true;
         statusDiscoveryPending = reset;
         recordStatusFailure(result.error);
-        if (statusRetryAllowed) scheduleWorkflowStatusRefresh(workflowStatusGeneration);
+        scheduleWorkflowStatusRefresh(workflowStatusGeneration);
         return;
       }
       items = reset
@@ -302,11 +305,11 @@ export function createLibraryPage(dependencies) {
         statusDiscoveryPending = false;
         statusDiscoveryCursor = page.value.nextCursor;
       }
-      const knownById=new Map(workflowStatuses.map(status=>[status.sourceId,status]));
-      const sourceIds=[...trackedSourceIds].filter(sourceId=>{const known=knownById.get(sourceId);return refreshAll||statusUnavailable||known===undefined||countProcessingWorkflowStatuses([known])>0||known.run!=null&&cancellationRetries.has(known.run.runId);});
-      const results = await Promise.all(sourceIds.map(sourceId => gateway.workflowStatus(sourceId)));
+      const known=new Map(workflowStatuses.map(status=>[status.sourceId,status]));
+      const results = await Promise.all([...trackedSourceIds]
+        .filter(sourceId=>{const status=known.get(sourceId);return refreshAll||statusUnavailable||!status||workflowNeedsRefresh([status])||cancellationRetries.has(status.run?.runId??'');})
+        .map(sourceId => gateway.workflowStatus(sourceId)));
       if (generation !== workflowStatusGeneration) return;
-      const known = new Map(workflowStatuses.map(status => [status.sourceId,status]));
       /** @type {WorkflowSourceStatus[]} */ const failedCompletions=[];
       let completed=false;
       for (const result of results) {
@@ -340,16 +343,14 @@ export function createLibraryPage(dependencies) {
         if(dependencies.confirmRetryFailed?.((quizzes?run.progress?.failedQuizItems:run.progress?.failedItems)?.length??0,quizzes))void retryWorkflow(run.runId,run.revision,false,true,quizzes);
       }
       if (failed) onError("Status unavailable.");
-      if (statusRetryAllowed && (failed || countProcessingWorkflowStatuses(workflowStatuses) > 0)) scheduleWorkflowStatusRefresh(generation);
-      else cancelWorkflowStatusRefresh();
+      cancelWorkflowStatusRefresh();
+      scheduleWorkflowStatusRefresh(generation);
       rerender();
     })();
     workflowStatusRead = currentRead;
     workflowStatusReadGeneration = generation;
     try { await currentRead; }
-    finally {
-      if (workflowStatusRead === currentRead) { workflowStatusRead = null; }
-    }
+    finally { workflowStatusRead = null; }
   }
 
   /** @param {import("../features/source-library/gateway.js").SourceGatewayFailure} failure */
@@ -375,13 +376,13 @@ export function createLibraryPage(dependencies) {
       generation !== workflowStatusGeneration ||
       disposed ||
       workflowStatusRefreshHandle !== null ||
-      (!statusRetryAllowed || !statusUnavailable && countProcessingWorkflowStatuses(workflowStatuses) === 0)
+      (!statusRetryAllowed || !statusUnavailable && !workflowNeedsRefresh(workflowStatuses))
     ) return;
     workflowStatusRefreshHandle = schedule(() => {
       workflowStatusRefreshHandle = null;
       if (generation !== workflowStatusGeneration) return;
       void loadWorkflowStatuses();
-    }, WORKFLOW_STATUS_REFRESH_MS);
+    }, 60_000);
   }
 
   function stopWorkflowStatusPolling() {

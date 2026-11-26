@@ -8,7 +8,7 @@ function assert(value,message){if(!value)throw new Error(message);}
 /** @param {string} id */
 function source(id){return {id,ownerId:"owner-a",origin:/** @type {const} */("private-document"),submittedUrl:`https://app.example/api/private-documents/${id}`,canonicalUrl:`https://app.example/api/private-documents/${id}`,title:"Synthetic source",description:"fixture.txt",adapter:{id:"private-document",version:"1",granularity:"document",capabilities:["owner-private-document"]},interestAreaIds:[],identityEvidence:[],state:/** @type {const} */("active"),revision:1,approvedAt:"2026-10-05T00:00:00.000Z",updatedAt:"2026-10-05T00:00:00.000Z"};}
 /** @param {string} id @param {string} state */
-function status(id,state){return {sourceId:id,run:{runId:`run-${id}`,state,revision:1,counts:{pages:0,knowledgePoints:0,acceptedQuizzes:0,pendingQuizzes:0},extractionStartedAt:null,extractionDeadlineAt:null,elapsedMs:null,remainingMs:/** @type {number|null} */(null),decisionRequired:null,failureKind:null,robotsEvidence:null},reasonCode:null,message:null};}
+function status(id,state){return {sourceId:id,run:{runId:`run-${id}`,state,revision:1,counts:{pages:0,knowledgePoints:0,acceptedQuizzes:0,pendingQuizzes:0},extractionStartedAt:null,extractionDeadlineAt:null,elapsedMs:null,remainingMs:/** @type {number|null} */(null),decisionRequired:null,failureKind:null,robotsEvidence:null},reasonCode:state==='retryable-failure'?'retryable-failure':null,message:null};}
 /** @param {typeof fetch} fetch */
 function fixture(fetch){
  const timers=new Map();const errors=/** @type {string[]} */([]);let timerId=0;
@@ -25,6 +25,19 @@ Deno.test("empty-description source reaches global status discovery and polling"
  assert(requests === 1, "Empty description must not block initial status request");
  assert(f.page.renderProcessingStatus().includes("extracting knowledge points"), "Global header tracks the source");
  await f.poll(); assert(requests === 2, "Tracking keeps polling");
+});
+Deno.test("Library keeps watching an acquisition outage and displays automatic recovery without a reload",async()=>{
+ for(const failureKind of ['AcquisitionServiceUnavailable','AcquisitionProtocolInvalid:automatic-retries-exhausted']){
+  let recovering=false,reads=0;
+  const f=fixture(async input=>{
+   if(String(input).includes('source-status')){reads++;const current=status('a',recovering?'extraction-loop':'retryable-failure');return Response.json({result:recovering?current:{...current,run:{...current.run,failureKind},reasonCode:'retryable-failure',message:'The acquisition service is offline. Processing will resume automatically.'}});}
+   return Response.json({result:{items:[source('a')],interestAreas:[],nextCursor:null}});
+  });
+  await f.page.load();assert(f.timers.size===1,'An outage awaiting automatic recovery must keep one refresh scheduled');
+  assert(f.page.renderProcessingStatus()==='','Waiting for acquisition must not animate active processing');
+  recovering=true;await f.poll();assert(reads===2,'The waiting source must be included in the next status request');
+  assert(f.page.renderProcessingStatus().includes('extracting knowledge points'),'The open page must show resumed extraction');
+ }
 });
 Deno.test("global processing discovers later pages after refresh and remains independent of Library search",async()=>{
  let state="extraction-loop";const requested=/** @type {string[]} */([]);
@@ -129,7 +142,7 @@ Deno.test("waiting failure abandoned and expired workflows stop animation while 
  for(const state of ["source-added","rights-assessment","robots-check","extraction-loop","extraction-finalized","per-point-quiz-loop","completed","retryable-failure","abandoned","awaiting-upload","awaiting-rights-review","paused"]){
  const f=fixture(async input=>String(input).includes("source-status")?Response.json({result:status("a",state)}):Response.json({result:{items:[source("a")],interestAreas:[],nextCursor:null}}));
  await f.page.load();const active=["source-added","rights-assessment","robots-check","extraction-loop","extraction-finalized","per-point-quiz-loop"].includes(state);
- assert(f.page.renderProcessingStatus().includes("library-processing-spinner")===active,`Truthful animation for ${state}`);assert(f.timers.size===(active?1:0),`Truthful polling for ${state}`);
+ assert(f.page.renderProcessingStatus().includes("library-processing-spinner")===active,`Truthful animation for ${state}`);assert(f.timers.size===(active||state==='retryable-failure'?1:0),`Watch active or retryable work for ${state}`);
  }
  const expired=status("a","extraction-loop");expired.run.remainingMs=0;
  const f=fixture(async input=>String(input).includes("source-status")?Response.json({result:expired}):Response.json({result:{items:[source("a")],interestAreas:[],nextCursor:null}}));
